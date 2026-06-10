@@ -1,0 +1,131 @@
+{
+  "theme_and_archetype": {
+    "domain": "Charity & Membership Management Platform",
+    "theme": "Light",
+    "archetype": "Archetype 1: Organic & Earthy (Trust, Growth, Calm)",
+    "reasoning": "A charity and community group in Kerala dealing with financial contributions, medical aid, and death benefits requires a UI that feels highly trustworthy, grounded, and empathetic. Dark mode or harsh tech colors feel inappropriate and clinical. A light, earthy theme builds community trust."
+  },
+  "colors": {
+    "background": {
+      "default": "#F5F5F0",
+      "paper": "#FFFFFF"
+    },
+    "primary": {
+      "main": "#166534",
+      "light": "#22C55E",
+      "dark": "#14532D",
+      "foreground": "#FFFFFF"
+    },
+    "secondary": {
+      "main": "#9A3412",
+      "light": "#F97316",
+      "foreground": "#FFFFFF"
+    },
+    "accent": {
+      "medical": "#E11D48",
+      "death_benefit": "#475569",
+      "marriage": "#D97706"
+    },
+    "neutral": {
+      "50": "#FAFAF9",
+      "100": "#F5F5F4",
+      "200": "#E7E5E4",
+      "300": "#D6D3D1",
+      "400": "#A8A29E",
+      "500": "#78716C",
+      "600": "#57534E",
+      "700": "#44403C",
+      "800": "#292524",
+      "900": "#1C1917"
+    },
+    "text": {
+      "primary": "#1C1917",
+      "secondary": "#57534E",
+      "disabled": "#A8A29E"
+    },
+    "status": {
+      "success": "#16A34A",
+      "warning": "#D97706",
+      "error": "#DC2626",
+      "info": "#2563EB"
+    }
+  },
+  "typography": {
+    "fonts": {
+      "heading": "'Manrope', sans-serif",
+      "body": "'IBM Plex Sans', sans-serif"
+    },
+    "sizes": {
+      "h1": "text-4xl md:text-5xl tracking-tight font-bold text-stone-900",
+      "h2": "text-2xl md:text-3xl tracking-tight font-semibold text-stone-900",
+      "h3": "text-xl md:text-2xl font-semibold text-stone-800",
+      "h4": "text-lg font-medium text-stone-800",
+      "body": "text-base leading-relaxed text-stone-700",
+      "small": "text-sm text-stone-500",
+      "overline": "text-xs font-bold uppercase tracking-[0.2em] text-stone-500"
+    }
+  },
+  "spacing_and_layout": {
+    "philosophy": "Generous spacing. The 'Control Room' grid protocol for dashboards. High density for tables, but ample padding for distinct sections.",
+    "container_padding": "p-6 md:p-8 lg:p-12",
+    "grid_dashboard": "grid grid-cols-1 md:grid-cols-3 lg:grid-cols-4 gap-6",
+    "widget_ratios": {
+      "summary": "col-span-1",
+      "primary_data": "col-span-2 row-span-2 lg:col-span-3",
+      "feed_list": "col-span-1 row-span-2"
+    },
+    "alignment": "Left-align dense content and forms. Optical alignment for icons and text."
+  },
+  "surface_strategies": {
+    "dashboard_cards": "Flat background (bg-white), 1px subtle border (border-stone-200), no heavy shadow by default. Hover adds slight shadow-sm.",
+    "headers": "Solid white background (bg-white/95) with subtle bottom border (border-stone-200), backdrop-blur-md if sticky.",
+    "modals": "Crisp edges, rounded-md, flat white background, dark overlay (bg-stone-900/40)."
+  },
+  "motion_and_interactions": {
+    "hover_states": "Interactive elements must transition colors smoothly (transition-colors duration-200). Background darkens slightly, text maintains contrast.",
+    "focus_states": "focus:ring-2 focus:ring-[#166534]/50 focus:outline-none",
+    "click_states": "active:scale-[0.98] transition-transform",
+    "page_transitions": "Subtle fade-in for data grids and staggered entrance for lists."
+  },
+  "component_rules": {
+    "buttons": "Flat, rectangular (rounded-md). Primary uses bg-[#166534] text-white. Secondary uses bg-stone-100 text-stone-800 hover:bg-stone-200.",
+    "inputs": "Shadcn defaults customized with rounded-md, border-stone-300, focus:border-[#166534].",
+    "tables": "Shadcn table component. Dense rows. text-sm. Hover effect on rows (hover:bg-stone-50).",
+    "cards": "Avoid overusing the Shadcn Card wrapper with heavy drop shadows. Use raw HTML divs with border-stone-200 and bg-white for a cleaner, auditable financial look."
+  },
+  "icons_and_assets": {
+    "library": "@phosphor-icons/react",
+    "usage": "Use Phosphor Icons in 'regular' or 'duotone' weight. Duotone for dashboard navigation items, regular for action buttons."
+  },
+  "media_and_images": {
+    "login_hero_bg": {
+      "url": "https://images.pexels.com/photos/12518601/pexels-photo-12518601.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940",
+      "description": "Lush and tranquil tropical scenery in Kadalundi, Kerala, India - use for login page background overlayed with bg-stone-900/50"
+    },
+    "auth_alternative_bg": {
+      "url": "https://images.pexels.com/photos/6544756/pexels-photo-6544756.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940",
+      "description": "Tranquil tropical scene with palm trees - alternative for marketing or auth screens"
+    },
+    "community_placeholder": {
+      "url": "https://images.pexels.com/photos/14124346/pexels-photo-14124346.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940",
+      "description": "Joyful family moment - use for dashboard welcome banners or member success stories"
+    }
+  },
+  "testing_attributes": {
+    "rule": "All interactive and key informational elements MUST include a data-testid attribute.",
+    "convention": "kebab-case, role-based",
+    "examples": [
+      "data-testid=\"login-form-submit-button\"",
+      "data-testid=\"member-registration-button\"",
+      "data-testid=\"total-contributions-metric\""
+    ]
+  },
+  "instructions_to_main_agent": [
+    "Install and configure Tailwind CSS and Shadcn UI.",
+    "Install @phosphor-icons/react for icons.",
+    "Set up standard CSS variables in index.css based on the colors object provided in this JSON.",
+    "Prioritize data clarity and trust over heavy graphics. Use the provided typography hierarchy strictly.",
+    "Implement role-based routing (Super Admin, President, Treasurer, Secretary, Member) with distinct sidebars.",
+    "Use data-testid attributes on all buttons, links, form inputs, and major layout wrappers."
+  ]
+}
