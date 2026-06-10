@@ -1,55 +1,64 @@
-import { useEffect } from "react";
 import "@/App.css";
-import { BrowserRouter, Routes, Route } from "react-router-dom";
-import axios from "axios";
-import { HOME } from "@/constants/testIds";
+import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
+import { AuthProvider, useAuth } from "@/contexts/AuthContext";
+import Layout from "@/components/Layout";
+import Login from "@/pages/Login";
+import Dashboard from "@/pages/Dashboard";
+import Members from "@/pages/Members";
+import Contributions from "@/pages/Contributions";
+import Benefits from "@/pages/Benefits";
+import MedicalAid from "@/pages/MedicalAid";
+import DeathAssistance from "@/pages/DeathAssistance";
+import Financials from "@/pages/Financials";
+import Committee from "@/pages/Committee";
+import Meetings from "@/pages/Meetings";
+import Reports from "@/pages/Reports";
+import Users from "@/pages/Users";
 
-const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
-const API = `${BACKEND_URL}/api`;
-
-const Home = () => {
-  const helloWorldApi = async () => {
-    try {
-      const response = await axios.get(`${API}/`);
-      console.log(response.data.message);
-    } catch (e) {
-      console.error(e, `errored out requesting / api`);
-    }
-  };
-
-  useEffect(() => {
-    helloWorldApi();
-  }, []);
-
-  return (
-    <div>
-      <header className="App-header">
-        <a
-          data-testid={HOME.emergentLink}
-          className="App-link"
-          href="https://emergent.sh"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <img src="https://avatars.githubusercontent.com/in/1201222?s=120&u=2686cf91179bbafbc7a71bfbc43004cf9ae1acea&v=4" />
-        </a>
-        <p className="mt-5">Building something incredible ~!</p>
-      </header>
+function ProtectedRoute({ children }) {
+  const { user } = useAuth();
+  if (user === null) return (
+    <div className="min-h-screen flex items-center justify-center bg-stone-50">
+      <div className="flex items-center gap-3 text-stone-600">
+        <div className="w-5 h-5 border-2 border-green-800 border-t-transparent rounded-full animate-spin" />
+        <span className="font-medium">Loading...</span>
+      </div>
     </div>
   );
-};
+  if (user === false) return <Navigate to="/login" replace />;
+  return children;
+}
+
+function AppRoutes() {
+  const { user } = useAuth();
+  return (
+    <Routes>
+      <Route path="/login" element={user && user !== null && user !== false ? <Navigate to="/dashboard" replace /> : <Login />} />
+      <Route path="/" element={<Navigate to="/dashboard" replace />} />
+      <Route path="/" element={<ProtectedRoute><Layout /></ProtectedRoute>}>
+        <Route path="dashboard" element={<Dashboard />} />
+        <Route path="members" element={<Members />} />
+        <Route path="contributions" element={<Contributions />} />
+        <Route path="benefits" element={<Benefits />} />
+        <Route path="medical-aid" element={<MedicalAid />} />
+        <Route path="death-assistance" element={<DeathAssistance />} />
+        <Route path="financials" element={<Financials />} />
+        <Route path="committee" element={<Committee />} />
+        <Route path="meetings" element={<Meetings />} />
+        <Route path="reports" element={<Reports />} />
+        <Route path="users" element={<Users />} />
+      </Route>
+    </Routes>
+  );
+}
 
 function App() {
   return (
-    <div className="App">
+    <AuthProvider>
       <BrowserRouter>
-        <Routes>
-          <Route path="/" element={<Home />}>
-            <Route index element={<Home />} />
-          </Route>
-        </Routes>
+        <AppRoutes />
       </BrowserRouter>
-    </div>
+    </AuthProvider>
   );
 }
 
