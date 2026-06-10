@@ -50,11 +50,13 @@ function MemberForm({ initial, onSave, onClose }) {
             <div className="col-span-2">
               <label className="block text-sm font-medium text-stone-700 mb-1">Full Name *</label>
               <input required value={form.name} onChange={e => f("name", e.target.value)}
+                data-testid="member-name-input"
                 className="w-full border border-stone-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-700/30 focus:border-green-700" />
             </div>
             <div>
               <label className="block text-sm font-medium text-stone-700 mb-1">Mobile *</label>
               <input required value={form.mobile} onChange={e => f("mobile", e.target.value)}
+                data-testid="member-mobile-input"
                 className="w-full border border-stone-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-700/30 focus:border-green-700" />
             </div>
             <div>
@@ -193,7 +195,7 @@ export default function Members() {
                     <td className="font-medium text-stone-900">{m.name}</td>
                     <td className="text-stone-600">{m.mobile}</td>
                     <td className="text-stone-500 max-w-xs truncate">{m.address}</td>
-                    <td>{m.joining_date ? new Date(m.joining_date).toLocaleDateString("en-IN") : "-"}</td>
+                    <td>{m.joining_date ? new Date(m.joining_date).toLocaleDateString("en-IN", {day:"2-digit",month:"short",year:"numeric"}) : "-"}</td>
                     <td>
                       <span className={`inline-flex px-2 py-0.5 text-xs font-medium rounded border ${STATUS_COLORS[m.status] || "badge-pending"}`}>
                         {m.status}

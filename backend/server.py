@@ -89,8 +89,15 @@ def ss(docs) -> list:
 
 # ── ID generators ─────────────────────────────────────────────────────────────
 async def next_member_id():
-    count = await db.members.count_documents({})
-    return f"TW-{(count+1):03d}"
+    # Use max existing ID to avoid collisions after deletions
+    last = await db.members.find_one({}, sort=[("member_id", -1)])
+    if last and last.get("member_id"):
+        try:
+            num = int(last["member_id"].split("-")[-1])
+            return f"TW-{(num+1):03d}"
+        except (ValueError, IndexError):
+            pass
+    return "TW-001"
 
 async def next_receipt():
     yr = datetime.now().year
