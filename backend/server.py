@@ -1,8 +1,8 @@
 from dotenv import load_dotenv
 load_dotenv()
 
-from fastapi import FastAPI, APIRouter, HTTPException, Request, Depends
-from fastapi.responses import Response
+from fastapi import FastAPI, APIRouter, HTTPException, Request, Depends, UploadFile, File
+from fastapi.responses import Response, StreamingResponse
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
 from pydantic import BaseModel, BeforeValidator
@@ -10,7 +10,8 @@ from typing import Annotated, Optional, List
 from bson import ObjectId
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
-import os, jwt, bcrypt, logging
+from fpdf import FPDF
+import os, jwt, bcrypt, logging, io, pandas as pd
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
@@ -315,6 +316,21 @@ async def create_member(data: MemberCreate, user: dict = Depends(require_roles("
     doc["id"] = str(result.inserted_id)
     doc.pop("_id", None)
     return doc
+
+# ── BULK IMPORT (must be before /{mid} to avoid routing conflict) ─────────────
+@api_router.get("/members/import-template")
+async def import_template():
+    csv_content = (
+        "name,mobile,address,joining_date,status,aadhaar\n"
+        "Mohammed Ashraf,9876543210,\"House No 12 Main Road Wariyad\",2024-01-15,active,\n"
+        "Suhail Ahmed,9876543211,\"Near Mosque Wariyad\",2024-02-20,active,123456789012\n"
+        "Fathima Beevi,9876543212,\"Colony Road Wariyad\",2024-03-10,active,\n"
+    )
+    return Response(
+        content=csv_content,
+        media_type="text/csv",
+        headers={"Content-Disposition": "attachment; filename=members_template.csv"}
+    )
 
 @api_router.get("/members/{mid}")
 async def get_member(mid: str, user: dict = Depends(get_current_user)):
@@ -684,7 +700,300 @@ async def report_benefits(user: dict = Depends(get_current_user)):
         "death_count": death
     }
 
-# ── STARTUP ───────────────────────────────────────────────────────────────────
+@api_router.post("/members/import")
+async def import_members(
+    file: UploadFile = File(...),
+    user: dict = Depends(require_roles("super_admin", "secretary"))
+):
+    content = await file.read()
+    fname = (file.filename or "").lower()
+    try:
+        if fname.endswith(".csv"):
+            df = pd.read_csv(io.BytesIO(content))
+        elif fname.endswith((".xlsx", ".xls")):
+            df = pd.read_excel(io.BytesIO(content))
+        else:
+            raise HTTPException(400, "Only CSV (.csv) and Excel (.xlsx/.xls) files are supported")
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(400, f"Error parsing file: {str(e)}")
+
+    # Normalize column names
+    df.columns = [str(c).lower().strip().replace(" ", "_") for c in df.columns]
+    required = ["name", "mobile", "address"]
+    missing = [c for c in required if c not in df.columns]
+    if missing:
+        raise HTTPException(400, f"Missing required columns: {', '.join(missing)}. Required: name, mobile, address")
+
+    imported = 0
+    skipped = 0
+    errors = []
+
+    for i, row in df.iterrows():
+        try:
+            name = str(row.get("name", "")).strip()
+            if not name or name.lower() == "nan":
+                skipped += 1
+                continue
+            mobile = str(row.get("mobile", "")).strip()
+            address = str(row.get("address", "")).strip()
+            jd_raw = row.get("joining_date", row.get("joining date", ""))
+            joining_date = str(jd_raw).strip() if str(jd_raw).strip() not in ("nan", "", "NaT") else datetime.now().date().isoformat()
+            # Normalize date
+            if len(joining_date) == 10 and joining_date[4] == "-":
+                pass  # already YYYY-MM-DD
+            else:
+                try:
+                    joining_date = pd.to_datetime(joining_date).strftime("%Y-%m-%d")
+                except:
+                    joining_date = datetime.now().date().isoformat()
+
+            status_raw = str(row.get("status", "active")).strip().lower()
+            status = status_raw if status_raw in ("active", "inactive", "resigned", "deceased") else "active"
+            aadhaar_raw = str(row.get("aadhaar", "")).strip()
+            aadhaar = aadhaar_raw if aadhaar_raw not in ("nan", "") else None
+
+            member_id = await next_member_id()
+            await db.members.insert_one({
+                "member_id": member_id, "name": name, "mobile": mobile,
+                "address": address, "joining_date": joining_date,
+                "status": status, "aadhaar": aadhaar,
+                "created_at": datetime.now(timezone.utc).isoformat()
+            })
+            imported += 1
+        except Exception as e:
+            errors.append(f"Row {i + 2}: {str(e)}")
+
+    return {
+        "imported": imported,
+        "skipped": skipped,
+        "errors": errors,
+        "total_rows": len(df),
+        "message": f"Successfully imported {imported} members."
+        + (f" Skipped {skipped} empty rows." if skipped else "")
+        + (f" {len(errors)} rows had errors." if errors else "")
+    }
+
+# ── PDF RECEIPT ───────────────────────────────────────────────────────────────
+MONTHS_NAMES = ["","January","February","March","April","May","June",
+                "July","August","September","October","November","December"]
+
+def build_receipt_pdf(contrib: dict, member: dict | None) -> bytes:
+    pdf = FPDF()
+    pdf.set_margins(15, 15, 15)
+    pdf.add_page()
+
+    # Header bar
+    pdf.set_fill_color(22, 101, 52)
+    pdf.rect(0, 0, 210, 42, "F")
+    pdf.set_text_color(255, 255, 255)
+    pdf.set_y(10)
+    pdf.set_font("Helvetica", "B", 18)
+    pdf.cell(0, 9, "TWENTY20 CHARITY GROUP", ln=True, align="C")
+    pdf.set_font("Helvetica", "B", 11)
+    pdf.cell(0, 7, "WARIYAD", ln=True, align="C")
+    pdf.set_font("Helvetica", "", 9)
+    pdf.cell(0, 6, "Monthly Contribution Receipt", ln=True, align="C")
+
+    pdf.set_y(50)
+    pdf.set_text_color(28, 25, 23)
+
+    # Receipt meta
+    def row(label: str, value: str, bold_val: bool = False):
+        pdf.set_font("Helvetica", "B", 10)
+        pdf.cell(60, 8, label, ln=False)
+        pdf.set_font("Helvetica", "B" if bold_val else "", 10)
+        pdf.cell(0, 8, value, ln=True)
+
+    row("Receipt No:", contrib.get("receipt_number", "N/A"))
+    paid_at = contrib.get("paid_at", "")
+    try:
+        dt_obj = datetime.fromisoformat(paid_at)
+        date_str = dt_obj.strftime("%d %B %Y")
+    except Exception:
+        date_str = paid_at[:10] if paid_at else "-"
+    row("Date:", date_str)
+
+    # Divider
+    pdf.set_draw_color(200, 200, 200)
+    pdf.ln(3)
+    pdf.line(15, pdf.get_y(), 195, pdf.get_y())
+    pdf.ln(5)
+
+    # Member info
+    pdf.set_font("Helvetica", "B", 10)
+    pdf.set_text_color(22, 101, 52)
+    pdf.cell(0, 7, "MEMBER DETAILS", ln=True)
+    pdf.set_text_color(28, 25, 23)
+    row("Name:", member["name"] if member else "Unknown")
+    row("Member ID:", member["member_id"] if member else "-")
+    row("Mobile:", member.get("mobile", "-") if member else "-")
+
+    pdf.ln(3)
+    pdf.line(15, pdf.get_y(), 195, pdf.get_y())
+    pdf.ln(5)
+
+    # Contribution info
+    pdf.set_font("Helvetica", "B", 10)
+    pdf.set_text_color(22, 101, 52)
+    pdf.cell(0, 7, "CONTRIBUTION DETAILS", ln=True)
+    pdf.set_text_color(28, 25, 23)
+    month_num = contrib.get("month", 1)
+    month_str = MONTHS_NAMES[month_num] if 1 <= month_num <= 12 else str(month_num)
+    row("Period:", f"{month_str} {contrib.get('year', '')}")
+    method = str(contrib.get("payment_method", "-")).replace("_", " ").title()
+    row("Payment Method:", method)
+
+    # Amount box
+    pdf.ln(5)
+    pdf.set_fill_color(240, 253, 244)
+    pdf.set_draw_color(22, 101, 52)
+    pdf.rect(15, pdf.get_y(), 180, 18, "FD")
+    pdf.set_font("Helvetica", "B", 14)
+    pdf.set_text_color(22, 101, 52)
+    amount = contrib.get("amount", 0)
+    pdf.set_y(pdf.get_y() + 3)
+    pdf.cell(0, 8, f"AMOUNT PAID: Rs. {amount:,.0f}/-", ln=True, align="C")
+
+    # Footer
+    pdf.ln(15)
+    pdf.set_text_color(120, 113, 108)
+    pdf.set_font("Helvetica", "I", 8)
+    pdf.set_draw_color(231, 229, 228)
+    pdf.line(15, pdf.get_y(), 195, pdf.get_y())
+    pdf.ln(4)
+    pdf.cell(0, 5, "This is a computer-generated receipt. No signature required.", ln=True, align="C")
+    pdf.cell(0, 5, "Twenty20 Charity Group Wariyad - Serving the community", ln=True, align="C")
+
+    return bytes(pdf.output())
+
+@api_router.get("/contributions/{contrib_id}/receipt")
+async def download_receipt(contrib_id: str, user: dict = Depends(get_current_user)):
+    contrib = await db.contributions.find_one({"_id": ObjectId(contrib_id)})
+    if not contrib:
+        raise HTTPException(404, "Contribution not found")
+    member = None
+    if contrib.get("member_id"):
+        try:
+            member = await db.members.find_one({"_id": ObjectId(contrib["member_id"])})
+        except Exception:
+            pass
+
+    pdf_bytes = build_receipt_pdf(contrib, member)
+    rnum = contrib.get("receipt_number", "receipt")
+    return StreamingResponse(
+        io.BytesIO(pdf_bytes),
+        media_type="application/pdf",
+        headers={"Content-Disposition": f"attachment; filename={rnum}.pdf"}
+    )
+
+# ── DEMO DATA SEEDING ─────────────────────────────────────────────────────────
+@api_router.post("/demo/seed")
+async def seed_demo_data(user: dict = Depends(require_roles("super_admin"))):
+    demo_members = [
+        {"name": "Mohammed Ashraf", "mobile": "9876543210", "address": "House No 12, Main Road, Wariyad", "joining_date": "2022-01-15", "status": "active"},
+        {"name": "Suhail Ahmed Khan", "mobile": "9876543211", "address": "Near Mosque, Wariyad", "joining_date": "2022-02-20", "status": "active"},
+        {"name": "Abdul Rasheed", "mobile": "9876543212", "address": "Plot 45, East Block, Wariyad", "joining_date": "2022-03-10", "status": "active"},
+        {"name": "Basheer Ibrahim", "mobile": "9876543213", "address": "House 78, West Lane, Wariyad", "joining_date": "2022-04-05", "status": "active"},
+        {"name": "Faisal Mohammed", "mobile": "9876543214", "address": "Colony Road, Wariyad", "joining_date": "2022-05-12", "status": "active"},
+        {"name": "Hameed Ali", "mobile": "9876543215", "address": "Market Street, Wariyad", "joining_date": "2022-06-18", "status": "active"},
+        {"name": "Ibrahim Kutty", "mobile": "9876543216", "address": "Near School, Wariyad", "joining_date": "2022-07-22", "status": "active"},
+        {"name": "Jabir Haneef", "mobile": "9876543217", "address": "Bus Stand Road, Wariyad", "joining_date": "2022-08-30", "status": "active"},
+        {"name": "Khalid Mansoor", "mobile": "9876543218", "address": "Temple Road, Wariyad", "joining_date": "2022-09-14", "status": "active"},
+        {"name": "Latheef Salim", "mobile": "9876543219", "address": "Ring Road, Wariyad", "joining_date": "2022-10-08", "status": "active"},
+        {"name": "Mujeeb Rahman", "mobile": "9876543220", "address": "North Gate, Wariyad", "joining_date": "2022-11-03", "status": "active"},
+        {"name": "Noufal Hassan", "mobile": "9876543221", "address": "South Block, Wariyad", "joining_date": "2022-12-17", "status": "active"},
+        {"name": "Omar Farooq", "mobile": "9876543222", "address": "Riverside Road, Wariyad", "joining_date": "2023-01-09", "status": "active"},
+        {"name": "Rafeeq Ahamed", "mobile": "9876543223", "address": "Hill View, Wariyad", "joining_date": "2023-02-14", "status": "inactive"},
+        {"name": "Salim Babu", "mobile": "9876543224", "address": "Garden Lane, Wariyad", "joining_date": "2023-03-21", "status": "active"},
+    ]
+
+    created_ids = []
+    members_created = 0
+    for md in demo_members:
+        existing = await db.members.find_one({"mobile": md["mobile"]})
+        if existing:
+            created_ids.append({"_id": existing["_id"], "name": existing["name"]})
+        else:
+            member_id = await next_member_id()
+            doc = {**md, "member_id": member_id, "created_at": datetime.now(timezone.utc).isoformat()}
+            result = await db.members.insert_one(doc)
+            doc["_id"] = result.inserted_id
+            created_ids.append({"_id": result.inserted_id, "name": md["name"]})
+            members_created += 1
+
+    # Contributions for active members — last 4 months
+    now = datetime.now()
+    months_to_seed = []
+    for i in range(4):
+        m = now.month - i
+        y = now.year
+        if m <= 0:
+            m += 12
+            y -= 1
+        months_to_seed.append((m, y))
+
+    contrib_count = 0
+    for member_info in created_ids:
+        mid = str(member_info["_id"])
+        # Active members pay for all months; some skip last month (overdue)
+        for idx, (month, year) in enumerate(months_to_seed):
+            if idx == 0 and created_ids.index(member_info) % 4 == 0:
+                continue  # simulate 1 in 4 members pending this month
+            existing_c = await db.contributions.find_one({"member_id": mid, "month": month, "year": year})
+            if existing_c:
+                continue
+            receipt = await next_receipt()
+            doc = {
+                "member_id": mid, "month": month, "year": year,
+                "amount": 100.0, "payment_method": "cash",
+                "receipt_number": receipt, "recorded_by": user["id"],
+                "paid_at": datetime.now(timezone.utc).isoformat()
+            }
+            result = await db.contributions.insert_one(doc)
+            cid = str(result.inserted_id)
+            await db.cashbook.insert_one({
+                "entry_type": "credit", "category": "contribution",
+                "description": f"Monthly contribution - {year}/{month:02d} ({member_info['name']})",
+                "amount": 100.0, "date": datetime.now(timezone.utc).date().isoformat(),
+                "reference_id": cid, "voucher_number": await next_voucher(),
+                "recorded_by": user["id"], "created_at": datetime.now(timezone.utc).isoformat()
+            })
+            contrib_count += 1
+
+    # Seed a sample marriage benefit
+    if created_ids:
+        first_mid = str(created_ids[0]["_id"])
+        existing_b = await db.benefits.find_one({"member_id": first_mid, "benefit_type": "marriage"})
+        if not existing_b:
+            await db.benefits.insert_one({
+                "member_id": first_mid, "member_name": created_ids[0]["name"],
+                "benefit_type": "marriage", "amount": 5000,
+                "event_date": "2026-05-10", "status": "committee_approved",
+                "applied_by": user["id"], "created_at": datetime.now(timezone.utc).isoformat()
+            })
+
+    # Seed a sample medical aid request
+    existing_med = await db.medical_aid.find_one({"applicant_name": "Basheer Ibrahim (Demo)"})
+    if not existing_med:
+        await db.medical_aid.insert_one({
+            "applicant_name": "Basheer Ibrahim (Demo)", "contact": "9876543213",
+            "address": "Plot 45, East Block, Wariyad",
+            "medical_condition": "Cardiac Surgery", "hospital": "Govt Medical College",
+            "estimated_expense": 45000.0, "recommended_amount": 10000.0,
+            "status": "approved", "notes": "Recommended ₹10,000 by committee",
+            "applied_by": user["id"], "created_at": datetime.now(timezone.utc).isoformat()
+        })
+
+    return {
+        "members_created": members_created,
+        "members_already_existed": len(created_ids) - members_created,
+        "contributions_created": contrib_count,
+        "message": f"Demo data loaded: {members_created} new members, {contrib_count} contributions added."
+    }
+
+
 @app.on_event("startup")
 async def startup():
     await db.users.create_index("email", unique=True)

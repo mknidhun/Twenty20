@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import api, { formatError } from "@/utils/api";
 import { useAuth } from "@/contexts/AuthContext";
 import { CONTRIBUTIONS } from "@/constants/testIds";
-import { CheckCircle, Clock, Plus, X, Receipt } from "@phosphor-icons/react";
+import { CheckCircle, Clock, Plus, X, Receipt, DownloadSimple } from "@phosphor-icons/react";
 
 const MONTHS = ["","January","February","March","April","May","June","July","August","September","October","November","December"];
 
@@ -78,6 +78,22 @@ export default function Contributions() {
   const [search, setSearch] = useState("");
 
   const canWrite = ["super_admin", "treasurer"].includes(user?.role);
+
+  const downloadReceipt = async (contribId, receiptNumber) => {
+    try {
+      const res = await api.get(`/contributions/${contribId}/receipt`, { responseType: "blob" });
+      const url = URL.createObjectURL(new Blob([res.data], { type: "application/pdf" }));
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `${receiptNumber || "receipt"}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      alert("Failed to download receipt. Please try again.");
+    }
+  };
 
   const load = () => {
     setLoading(true);
@@ -158,7 +174,7 @@ export default function Contributions() {
                   <th>Amount</th>
                   <th>Payment Method</th>
                   <th>Receipt #</th>
-                  {canWrite && <th className="text-right">Action</th>}
+                    <th className="text-right">Action</th>
                 </tr>
               </thead>
               <tbody>
@@ -181,20 +197,32 @@ export default function Contributions() {
                         </span>
                       ) : "-"}
                     </td>
-                    {canWrite && (
-                      <td className="text-right">
-                        {s.status === "pending" ? (
+                    <td className="text-right">
+                      {s.status === "pending" ? (
+                        canWrite ? (
                           <button
                             onClick={() => setDialog(s)}
                             className="flex items-center gap-1.5 ml-auto px-3 py-1.5 bg-green-800 text-white rounded text-xs font-medium hover:bg-green-900 transition-colors"
                           >
                             <Plus size={12} weight="bold" /> Record
                           </button>
-                        ) : (
+                        ) : null
+                      ) : (
+                        <div className="flex items-center justify-end gap-2">
                           <span className="text-xs text-green-700 font-medium">✓ Paid</span>
-                        )}
-                      </td>
-                    )}
+                          {s.contribution_id && (
+                            <button
+                              onClick={() => downloadReceipt(s.contribution_id, s.receipt_number)}
+                              data-testid="download-receipt-button"
+                              className="flex items-center gap-1 px-2 py-1 text-xs text-stone-600 border border-stone-300 rounded hover:bg-stone-50 hover:border-stone-400 transition-colors"
+                              title="Download PDF Receipt"
+                            >
+                              <DownloadSimple size={12} /> PDF
+                            </button>
+                          )}
+                        </div>
+                      )}
+                    </td>
                   </tr>
                 ))}
               </tbody>
