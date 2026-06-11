@@ -5,7 +5,7 @@ from fastapi import FastAPI, APIRouter, HTTPException, Request, Depends, UploadF
 from fastapi.responses import Response, StreamingResponse
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
-from pydantic import BaseModel, BeforeValidator
+from pydantic import BaseModel, BeforeValidator, EmailStr, field_validator
 from typing import Annotated, Optional, List
 from bson import ObjectId
 from datetime import datetime, timezone, timedelta
@@ -34,9 +34,24 @@ logging.basicConfig(level=logging.INFO)
 client = AsyncIOMotorClient(os.environ["MONGO_URL"])
 db = client[os.environ["DB_NAME"]]
 
+# ── Security config ───────────────────────────────────────────────────────────
+# SECURITY FIX: central role whitelist (prevents invented/privileged roles)
+ALLOWED_ROLES = {"super_admin", "president", "secretary", "treasurer",
+                 "committee_member", "auditor", "member"}
+ADMIN_VIEW_ROLES = {"super_admin", "president", "secretary", "treasurer"}
+
+# SECURITY FIX: cookies must be Secure (HTTPS) in production.
+# Set COOKIE_SECURE=false in backend/.env ONLY for local http://localhost dev.
+COOKIE_SECURE = os.environ.get("COOKIE_SECURE", "true").lower() != "false"
+
 # ── JWT ───────────────────────────────────────────────────────────────────────
 JWT_ALGORITHM = "HS256"
-def get_jwt_secret(): return os.environ["JWT_SECRET"]
+def get_jwt_secret():
+    secret = os.environ["JWT_SECRET"]
+    # SECURITY FIX: refuse weak/placeholder secrets
+    if len(secret) < 32:
+        raise RuntimeError("JWT_SECRET must be at least 32 characters")
+    return secret
 
 def create_access_token(user_id: str, email: str) -> str:
     payload = {"sub": user_id, "email": email, "type": "access",
@@ -63,6 +78,39 @@ def validate_object_id(v):
 
 PyObjectId = Annotated[str, BeforeValidator(validate_object_id)]
 
+# SECURITY FIX: safe ObjectId parsing — invalid IDs return 400 not 500
+def oid(value: str) -> ObjectId:
+    if not ObjectId.is_valid(value):
+        raise HTTPException(400, "Invalid ID format")
+    return ObjectId(value)
+
+# SECURITY FIX: mask Aadhaar (national ID/PII) for non-admin roles
+def mask_aadhaar(doc: dict, role: str) -> dict:
+    if doc and doc.get("aadhaar") and role not in ADMIN_VIEW_ROLES:
+        doc["aadhaar"] = "XXXX-XXXX-" + str(doc["aadhaar"])[-4:]
+    return doc
+
+# SECURITY FIX: neutralize spreadsheet/CSV formula injection
+def safe_cell(v):
+    if isinstance(v, str) and v[:1] in ("=", "+", "-", "@"):
+        return "'" + v
+    return v
+
+# SECURITY FIX: simple in-memory login rate limiter
+from collections import defaultdict
+import time as _time
+_login_attempts = defaultdict(list)
+_MAX_ATTEMPTS, _WINDOW_SECONDS = 5, 900
+
+def check_rate_limit(key: str):
+    now = _time.time()
+    _login_attempts[key] = [t for t in _login_attempts[key] if now - t < _WINDOW_SECONDS]
+    if len(_login_attempts[key]) >= _MAX_ATTEMPTS:
+        raise HTTPException(429, "Too many login attempts. Try again later.")
+
+def record_failed_attempt(key: str):
+    _login_attempts[key].append(_time.time())
+
 # ── Auth helpers ──────────────────────────────────────────────────────────────
 async def get_current_user(request: Request) -> dict:
     token = request.cookies.get("access_token")
@@ -78,6 +126,9 @@ async def get_current_user(request: Request) -> dict:
         user = await db.users.find_one({"_id": ObjectId(payload["sub"])})
         if not user:
             raise HTTPException(401, "User not found")
+        # SECURITY FIX: reject tokens for deactivated accounts
+        if user.get("is_active") is False:
+            raise HTTPException(403, "Account is disabled")
         user["id"] = str(user.pop("_id"))
         user.pop("password_hash", None)
         return user
@@ -125,20 +176,54 @@ async def next_voucher():
 
 # ── Pydantic Models ───────────────────────────────────────────────────────────
 class LoginReq(BaseModel):
-    email: str
+    email: EmailStr  # SECURITY FIX: validated email
     password: str
+
+# SECURITY FIX: public self-registration must NOT accept a role field
+class RegisterReq(BaseModel):
+    name: str
+    email: EmailStr
+    password: str
+
+    @field_validator("password")
+    @classmethod
+    def strong_password(cls, v):
+        if len(v) < 8:
+            raise ValueError("Password must be at least 8 characters")
+        return v
 
 class UserCreate(BaseModel):
     name: str
-    email: str
+    email: EmailStr
     password: str
     role: str = "member"
     member_id: Optional[str] = None
+
+    @field_validator("password")
+    @classmethod
+    def strong_password(cls, v):
+        if len(v) < 8:
+            raise ValueError("Password must be at least 8 characters")
+        return v
+
+    @field_validator("role")
+    @classmethod
+    def valid_role(cls, v):
+        if v not in ALLOWED_ROLES:
+            raise ValueError("Invalid role")
+        return v
 
 class UserUpdate(BaseModel):
     name: Optional[str] = None
     role: Optional[str] = None
     is_active: Optional[bool] = None
+
+    @field_validator("role")
+    @classmethod
+    def valid_role(cls, v):
+        if v is not None and v not in ALLOWED_ROLES:
+            raise ValueError("Invalid role")
+        return v
 
 class MemberCreate(BaseModel):
     name: str
@@ -251,46 +336,61 @@ class NotificationSendReq(BaseModel):
 app = FastAPI(title="Twenty20 Wariyad API")
 api_router = APIRouter(prefix="/api")
 
+# SECURITY FIX: explicit origin allowlist (no wildcard with credentials)
 FRONTEND_URL = os.environ.get("FRONTEND_URL", "http://localhost:3000")
+ALLOWED_ORIGINS = [o.strip() for o in FRONTEND_URL.split(",") if o.strip()]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[FRONTEND_URL],
+    allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type"],
 )
 
 # ── AUTH ──────────────────────────────────────────────────────────────────────
+def set_auth_cookies(response: Response, at: str, rt: str):
+    # SECURITY FIX: secure flag driven by env (HTTPS-only in prod)
+    response.set_cookie("access_token", at, httponly=True, secure=COOKIE_SECURE, samesite="lax", max_age=28800)
+    response.set_cookie("refresh_token", rt, httponly=True, secure=COOKIE_SECURE, samesite="lax", max_age=604800)
+
 @api_router.post("/auth/register")
-async def register(data: UserCreate, response: Response):
+async def register(data: RegisterReq, response: Response):
     email = data.email.lower().strip()
     if await db.users.find_one({"email": email}):
         raise HTTPException(400, "Email already registered")
+    # SECURITY FIX (CRITICAL privilege escalation): self-registration ALWAYS
+    # creates a plain "member". Previously a client could send role="super_admin"
+    # and instantly own the system. Admins promote users via PUT /users/{id}.
     uid = (await db.users.insert_one({
         "name": data.name, "email": email,
         "password_hash": hash_password(data.password),
-        "role": data.role, "member_id": data.member_id,
+        "role": "member", "member_id": None,
         "is_active": True,
         "created_at": datetime.now(timezone.utc).isoformat()
     })).inserted_id
     user_id = str(uid)
     at = create_access_token(user_id, email)
     rt = create_refresh_token(user_id)
-    response.set_cookie("access_token", at, httponly=True, secure=False, samesite="lax", max_age=28800)
-    response.set_cookie("refresh_token", rt, httponly=True, secure=False, samesite="lax", max_age=604800)
-    return {"id": user_id, "name": data.name, "email": email, "role": data.role}
+    set_auth_cookies(response, at, rt)
+    return {"id": user_id, "name": data.name, "email": email, "role": "member"}
 
 @api_router.post("/auth/login")
-async def login(data: LoginReq, response: Response):
+async def login(data: LoginReq, request: Request, response: Response):
     email = data.email.lower().strip()
+    # SECURITY FIX: brute-force rate limiting per email + client IP
+    rl_key = f"{email}|{request.client.host if request.client else '?'}"
+    check_rate_limit(rl_key)
     user = await db.users.find_one({"email": email})
     if not user or not verify_password(data.password, user["password_hash"]):
+        record_failed_attempt(rl_key)
         raise HTTPException(401, "Invalid email or password")
+    # SECURITY FIX: deactivated accounts cannot log in
+    if user.get("is_active") is False:
+        raise HTTPException(403, "Account is disabled")
     user_id = str(user["_id"])
     at = create_access_token(user_id, email)
     rt = create_refresh_token(user_id)
-    response.set_cookie("access_token", at, httponly=True, secure=False, samesite="lax", max_age=28800)
-    response.set_cookie("refresh_token", rt, httponly=True, secure=False, samesite="lax", max_age=604800)
+    set_auth_cookies(response, at, rt)
     return {"id": user_id, "name": user["name"], "email": user["email"],
             "role": user["role"], "member_id": user.get("member_id")}
 
@@ -313,6 +413,10 @@ async def list_users(user: dict = Depends(require_roles("super_admin", "presiden
 @api_router.post("/users")
 async def create_user(data: UserCreate, user: dict = Depends(require_roles("super_admin", "secretary"))):
     email = data.email.lower().strip()
+    # SECURITY FIX: only super_admin may create privileged roles
+    PRIVILEGED = {"super_admin", "president", "auditor"}
+    if data.role in PRIVILEGED and user["role"] != "super_admin":
+        raise HTTPException(403, "Only super_admin can assign privileged roles")
     if await db.users.find_one({"email": email}):
         raise HTTPException(400, "Email already registered")
     uid = (await db.users.insert_one({
@@ -326,20 +430,24 @@ async def create_user(data: UserCreate, user: dict = Depends(require_roles("supe
 @api_router.put("/users/{uid}")
 async def update_user(uid: str, data: UserUpdate, user: dict = Depends(require_roles("super_admin"))):
     upd = {k: v for k, v in data.model_dump().items() if v is not None}
-    await db.users.update_one({"_id": ObjectId(uid)}, {"$set": upd})
-    doc = await db.users.find_one({"_id": ObjectId(uid)}, {"password_hash": 0})
+    await db.users.update_one({"_id": oid(uid)}, {"$set": upd})
+    doc = await db.users.find_one({"_id": oid(uid)}, {"password_hash": 0})
     return s(doc)
 
 @api_router.delete("/users/{uid}")
 async def delete_user(uid: str, user: dict = Depends(require_roles("super_admin"))):
-    await db.users.delete_one({"_id": ObjectId(uid)})
+    # SECURITY FIX: cannot delete your own account (avoid admin lockout)
+    if uid == user["id"]:
+        raise HTTPException(400, "You cannot delete your own account")
+    await db.users.delete_one({"_id": oid(uid)})
     return {"message": "User deleted"}
 
 # ── MEMBERS ───────────────────────────────────────────────────────────────────
 @api_router.get("/members")
 async def list_members(user: dict = Depends(get_current_user)):
     docs = await db.members.find().sort("created_at", -1).to_list(500)
-    return ss(docs)
+    # SECURITY FIX: mask Aadhaar PII for non-admin roles
+    return [mask_aadhaar(d, user["role"]) for d in ss(docs)]
 
 @api_router.post("/members")
 async def create_member(data: MemberCreate, user: dict = Depends(require_roles("super_admin", "secretary", "treasurer"))):
@@ -438,9 +546,12 @@ def build_member_qr_card(member: dict) -> bytes:
 
 @api_router.get("/members/{mid}/qr-card")
 async def download_member_qr_card(mid: str, user: dict = Depends(get_current_user)):
-    member = await db.members.find_one({"_id": ObjectId(mid)})
+    member = await db.members.find_one({"_id": oid(mid)})
     if not member:
         raise HTTPException(404, "Member not found")
+    # SECURITY FIX (IDOR): a plain member may only download their own card
+    if user["role"] == "member" and user.get("member_id") != member.get("member_id"):
+        raise HTTPException(403, "Not allowed")
     pdf_bytes = build_member_qr_card(member)
     name_slug = member.get("name", "member").replace(" ", "_")
     return StreamingResponse(
@@ -452,12 +563,12 @@ async def download_member_qr_card(mid: str, user: dict = Depends(get_current_use
 @api_router.put("/members/{mid}")
 async def update_member(mid: str, data: MemberUpdate, user: dict = Depends(require_roles("super_admin", "secretary", "treasurer"))):
     upd = {k: v for k, v in data.model_dump().items() if v is not None}
-    await db.members.update_one({"_id": ObjectId(mid)}, {"$set": upd})
-    return s(await db.members.find_one({"_id": ObjectId(mid)}))
+    await db.members.update_one({"_id": oid(mid)}, {"$set": upd})
+    return s(await db.members.find_one({"_id": oid(mid)}))
 
 @api_router.delete("/members/{mid}")
 async def delete_member(mid: str, user: dict = Depends(require_roles("super_admin"))):
-    await db.members.delete_one({"_id": ObjectId(mid)})
+    await db.members.delete_one({"_id": oid(mid)})
     return {"message": "Member deleted"}
 
 # ── CONTRIBUTIONS ─────────────────────────────────────────────────────────────
@@ -485,7 +596,7 @@ async def record_contribution(data: ContribCreate, user: dict = Depends(require_
     result = await db.contributions.insert_one(doc)
     cid = str(result.inserted_id)
     # Auto cashbook credit
-    member = await db.members.find_one({"_id": ObjectId(data.member_id)})
+    member = await db.members.find_one({"_id": oid(data.member_id)})
     await db.cashbook.insert_one({
         "entry_type": "credit", "category": "contribution",
         "description": f"Monthly contribution - {data.year}/{data.month:02d} ({member['name'] if member else 'Unknown'})",
@@ -499,7 +610,7 @@ async def record_contribution(data: ContribCreate, user: dict = Depends(require_
 
 @api_router.delete("/contributions/{cid}")
 async def delete_contribution(cid: str, user: dict = Depends(require_roles("super_admin", "treasurer"))):
-    await db.contributions.delete_one({"_id": ObjectId(cid)})
+    await db.contributions.delete_one({"_id": oid(cid)})
     return {"message": "Deleted"}
 
 @api_router.get("/contributions/status/{year}/{month}")
@@ -535,7 +646,7 @@ async def list_benefits(user: dict = Depends(get_current_user)):
 
 @api_router.post("/benefits")
 async def apply_benefit(data: BenefitCreate, user: dict = Depends(get_current_user)):
-    member = await db.members.find_one({"_id": ObjectId(data.member_id)})
+    member = await db.members.find_one({"_id": oid(data.member_id)})
     if not member: raise HTTPException(404, "Member not found")
     if member["status"] != "active": raise HTTPException(400, "Member is not active")
     existing = await db.benefits.find_one({"member_id": data.member_id,
@@ -565,7 +676,7 @@ async def update_benefit_status(bid: str, data: StatusUpdate, user: dict = Depen
     elif st == "paid":
         if user["role"] not in ["super_admin", "treasurer"]: raise HTTPException(403, "Treasurer only")
         upd.update({"paid_by": user["id"], "paid_at": now})
-        benefit = await db.benefits.find_one({"_id": ObjectId(bid)})
+        benefit = await db.benefits.find_one({"_id": oid(bid)})
         if benefit:
             await db.cashbook.insert_one({
                 "entry_type": "debit",
@@ -577,8 +688,8 @@ async def update_benefit_status(bid: str, data: StatusUpdate, user: dict = Depen
             })
     elif st == "rejected":
         upd.update({"rejected_by": user["id"], "rejected_at": now})
-    await db.benefits.update_one({"_id": ObjectId(bid)}, {"$set": upd})
-    return s(await db.benefits.find_one({"_id": ObjectId(bid)}))
+    await db.benefits.update_one({"_id": oid(bid)}, {"$set": upd})
+    return s(await db.benefits.find_one({"_id": oid(bid)}))
 
 # ── MEDICAL AID ───────────────────────────────────────────────────────────────
 @api_router.get("/medical-aid")
@@ -602,7 +713,7 @@ async def update_medical_aid(aid_id: str, data: MedicalAidUpdate, user: dict = D
     if data.status == "approved":
         upd.update({"approved_by": user["id"], "approved_at": now})
     elif data.status == "paid":
-        aid = await db.medical_aid.find_one({"_id": ObjectId(aid_id)})
+        aid = await db.medical_aid.find_one({"_id": oid(aid_id)})
         if aid:
             await db.cashbook.insert_one({
                 "entry_type": "debit", "category": "medical_aid",
@@ -613,12 +724,12 @@ async def update_medical_aid(aid_id: str, data: MedicalAidUpdate, user: dict = D
                 "recorded_by": user["id"], "created_at": now
             })
         upd.update({"paid_by": user["id"], "paid_at": now})
-    await db.medical_aid.update_one({"_id": ObjectId(aid_id)}, {"$set": upd})
-    return s(await db.medical_aid.find_one({"_id": ObjectId(aid_id)}))
+    await db.medical_aid.update_one({"_id": oid(aid_id)}, {"$set": upd})
+    return s(await db.medical_aid.find_one({"_id": oid(aid_id)}))
 
 @api_router.delete("/medical-aid/{aid_id}")
 async def delete_medical_aid(aid_id: str, user: dict = Depends(require_roles("super_admin"))):
-    await db.medical_aid.delete_one({"_id": ObjectId(aid_id)})
+    await db.medical_aid.delete_one({"_id": oid(aid_id)})
     return {"message": "Deleted"}
 
 # ── DEATH ASSISTANCE ──────────────────────────────────────────────────────────
@@ -642,12 +753,12 @@ async def update_death_assistance(case_id: str, data: DeathUpdate, user: dict = 
     if data.status == "approved":
         upd["approved_by"] = user["id"]
         upd["approved_at"] = datetime.now(timezone.utc).isoformat()
-    await db.death_assistance.update_one({"_id": ObjectId(case_id)}, {"$set": upd})
-    return s(await db.death_assistance.find_one({"_id": ObjectId(case_id)}))
+    await db.death_assistance.update_one({"_id": oid(case_id)}, {"$set": upd})
+    return s(await db.death_assistance.find_one({"_id": oid(case_id)}))
 
 @api_router.delete("/death-assistance/{case_id}")
 async def delete_death_assistance(case_id: str, user: dict = Depends(require_roles("super_admin"))):
-    await db.death_assistance.delete_one({"_id": ObjectId(case_id)})
+    await db.death_assistance.delete_one({"_id": oid(case_id)})
     return {"message": "Deleted"}
 
 # ── CASHBOOK ──────────────────────────────────────────────────────────────────
@@ -674,7 +785,7 @@ async def create_cashbook_entry(data: CashbookCreate, user: dict = Depends(requi
 
 @api_router.delete("/cashbook/{eid}")
 async def delete_cashbook_entry(eid: str, user: dict = Depends(require_roles("super_admin", "treasurer"))):
-    await db.cashbook.delete_one({"_id": ObjectId(eid)})
+    await db.cashbook.delete_one({"_id": oid(eid)})
     return {"message": "Deleted"}
 
 # ── COMMITTEE ─────────────────────────────────────────────────────────────────
@@ -717,12 +828,12 @@ async def create_handover(
 
 @api_router.put("/committee/{cid}")
 async def update_committee(cid: str, data: dict, user: dict = Depends(require_roles("super_admin", "president"))):
-    await db.committee.update_one({"_id": ObjectId(cid)}, {"$set": data})
-    return s(await db.committee.find_one({"_id": ObjectId(cid)}))
+    await db.committee.update_one({"_id": oid(cid)}, {"$set": data})
+    return s(await db.committee.find_one({"_id": oid(cid)}))
 
 @api_router.delete("/committee/{cid}")
 async def delete_committee(cid: str, user: dict = Depends(require_roles("super_admin"))):
-    await db.committee.delete_one({"_id": ObjectId(cid)})
+    await db.committee.delete_one({"_id": oid(cid)})
     return {"message": "Deleted"}
 
 # ── MEETINGS ──────────────────────────────────────────────────────────────────
@@ -743,12 +854,12 @@ async def create_meeting(data: MeetingCreate, user: dict = Depends(require_roles
 @api_router.put("/meetings/{mid}")
 async def update_meeting(mid: str, data: MeetingUpdate, user: dict = Depends(get_current_user)):
     upd = {k: v for k, v in data.model_dump().items() if v is not None}
-    await db.meetings.update_one({"_id": ObjectId(mid)}, {"$set": upd})
-    return s(await db.meetings.find_one({"_id": ObjectId(mid)}))
+    await db.meetings.update_one({"_id": oid(mid)}, {"$set": upd})
+    return s(await db.meetings.find_one({"_id": oid(mid)}))
 
 @api_router.delete("/meetings/{mid}")
 async def delete_meeting(mid: str, user: dict = Depends(require_roles("super_admin", "president", "secretary"))):
-    await db.meetings.delete_one({"_id": ObjectId(mid)})
+    await db.meetings.delete_one({"_id": oid(mid)})
     return {"message": "Deleted"}
 
 
@@ -885,7 +996,7 @@ def build_minutes_pdf(meeting: dict) -> bytes:
 
 @api_router.get("/meetings/{mid}/minutes-pdf")
 async def download_minutes_pdf(mid: str, user: dict = Depends(get_current_user)):
-    meeting = await db.meetings.find_one({"_id": ObjectId(mid)})
+    meeting = await db.meetings.find_one({"_id": oid(mid)})
     if not meeting:
         raise HTTPException(404, "Meeting not found")
     pdf_bytes = build_minutes_pdf(meeting)
@@ -1149,13 +1260,16 @@ def build_receipt_pdf(contrib: dict, member: dict | None) -> bytes:
 
 @api_router.get("/contributions/{contrib_id}/receipt")
 async def download_receipt(contrib_id: str, user: dict = Depends(get_current_user)):
-    contrib = await db.contributions.find_one({"_id": ObjectId(contrib_id)})
+    contrib = await db.contributions.find_one({"_id": oid(contrib_id)})
     if not contrib:
         raise HTTPException(404, "Contribution not found")
+    # SECURITY FIX (IDOR): members may only download their own receipts
+    if user["role"] == "member" and contrib.get("member_id") != user.get("member_id"):
+        raise HTTPException(403, "Not allowed")
     member = None
     if contrib.get("member_id"):
         try:
-            member = await db.members.find_one({"_id": ObjectId(contrib["member_id"])})
+            member = await db.members.find_one({"_id": oid(contrib["member_id"])})
         except Exception:
             pass
 
@@ -1189,7 +1303,7 @@ async def export_excel_report(
             "Receipt No": c.get("receipt_number", ""),
             "Month": _MONTH_NAMES_SHORT[c.get("month", 1)],
             "Year": c.get("year", yr),
-            "Member Name": member_map.get(c.get("member_id", ""), {}).get("name", "Unknown"),
+            "Member Name": safe_cell(member_map.get(c.get("member_id", ""), {}).get("name", "Unknown")),
             "Amount (Rs)": c.get("amount", 0),
             "Payment Method": c.get("payment_method", "").replace("_", " ").title(),
             "Date Paid": c.get("paid_at", "")[:10] if c.get("paid_at") else "",
@@ -1199,7 +1313,7 @@ async def export_excel_report(
     benefit_rows = [
         {
             "Benefit Type": b.get("benefit_type", "").replace("_", " ").title(),
-            "Member Name": b.get("member_name", ""),
+            "Member Name": safe_cell(b.get("member_name", "")),
             "Amount (Rs)": b.get("amount", 0),
             "Status": b.get("status", "").replace("_", " ").title(),
             "Event Date": b.get("event_date", ""),
@@ -1214,7 +1328,7 @@ async def export_excel_report(
         cashbook_rows.append({
             "Voucher No": e.get("voucher_number", ""),
             "Date": e.get("date", ""),
-            "Description": e.get("description", ""),
+            "Description": safe_cell(e.get("description", "")),
             "Category": e.get("category", "").replace("_", " ").title(),
             "Type": "Credit" if e["entry_type"] == "credit" else "Debit",
             "Credit (Rs)": e["amount"] if e["entry_type"] == "credit" else 0,
@@ -1224,9 +1338,9 @@ async def export_excel_report(
     member_rows = [
         {
             "Member ID": m.get("member_id", ""),
-            "Name": m.get("name", ""),
-            "Mobile": m.get("mobile", ""),
-            "Address": m.get("address", ""),
+            "Name": safe_cell(m.get("name", "")),
+            "Mobile": safe_cell(m.get("mobile", "")),
+            "Address": safe_cell(m.get("address", "")),
             "Joining Date": m.get("joining_date", ""),
             "Status": m.get("status", "").title(),
         }
@@ -1642,7 +1756,11 @@ async def startup():
     await db.contributions.create_index([("member_id", 1), ("month", 1), ("year", 1)])
     await db.members.create_index("member_id", unique=True)
     admin_email = os.environ.get("ADMIN_EMAIL", "admin@twenty20wariyad.com")
-    admin_password = os.environ.get("ADMIN_PASSWORD", "Admin@20W20")
+    admin_password = os.environ.get("ADMIN_PASSWORD")
+    # SECURITY FIX: no hardcoded default admin password
+    if not admin_password:
+        logger.warning("ADMIN_PASSWORD not set — skipping admin seed. Set it in backend/.env")
+        return
     existing = await db.users.find_one({"email": admin_email})
     if not existing:
         await db.users.insert_one({
@@ -1655,12 +1773,7 @@ async def startup():
     elif not verify_password(admin_password, existing["password_hash"]):
         await db.users.update_one({"email": admin_email},
             {"$set": {"password_hash": hash_password(admin_password)}})
-    mem_path = Path("/app/memory")
-    mem_path.mkdir(exist_ok=True)
-    (mem_path / "test_credentials.md").write_text(
-        f"# Test Credentials\n\n## Super Admin\n- Email: {admin_email}\n- Password: {admin_password}\n- Role: super_admin\n\n"
-        "## Auth Endpoints\n- POST /api/auth/login\n- POST /api/auth/register\n- GET /api/auth/me\n- POST /api/auth/logout\n"
-    )
+    # SECURITY FIX: removed writing plaintext admin credentials to disk.
 
 app.include_router(api_router)
 
