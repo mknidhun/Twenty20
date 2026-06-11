@@ -19,7 +19,7 @@ Build a complete Charity & Membership Management Platform that digitizes member 
 3. **Secretary** - Manage members, meetings, benefit processing
 4. **Treasurer** - Record contributions, manage cashbook, approve payments
 5. **Committee Member** - Review & vote on requests
-6. **Auditor** - Read-only financial access
+6. **Auditor** - Read-only financial access + annual audit sign-off
 7. **Member** - View own profile, contributions, apply for benefits
 
 ## Core Requirements (Static)
@@ -33,38 +33,16 @@ Build a complete Charity & Membership Management Platform that digitizes member 
 - Committee management by year
 - Meeting scheduling and minutes recording
 - Dashboard with role-based stats and charts
-- Reports (member, contribution, benefits)
+- Reports (member, contribution, benefits) with Excel/PDF export
+- Notifications (SMS/WhatsApp reminders for defaulters via Twilio)
+- Annual Audit module (read-only trail + digital sign-off by auditor)
 - User management with role assignment
 
-## What's Been Implemented (2026-06, Iteration 2 update)
+## What's Been Implemented
 
-### New Features Added
-- ✅ Bulk member import — CSV & Excel (.csv/.xlsx/.xls) with template download
-  - POST /api/members/import
-  - GET /api/members/import-template (CSV template download)
-  - Frontend: drag-and-drop file upload dialog, shows import results
-- ✅ PDF receipt download — GET /api/contributions/{id}/receipt
-  - fpdf2-generated A4 PDF with header, member details, amount box
-  - Download button next to all paid contributions
-- ✅ Demo data seeding — POST /api/demo/seed (admin only)
-  - 15 realistic member profiles with Indian names
-  - 4 months of contribution history
-  - Sample marriage benefit (committee_approved) and medical aid (approved)
-- ✅ Load Demo Data button in Members page (super_admin only)
-- ✅ Fixed FastAPI route ordering bug: /members/import-template must precede /members/{mid}
-
-### Test Data Status
-- 23 total members (15 demo + 3 CSV import test + manual)
-- 60+ cashbook entries
-- Fund balance: ~₹7,800
-- 1 pending marriage benefit (Mohammed Ashraf — committee_approved, needs treasurer to mark paid)
-- 1 medical aid approved (Basheer Ibrahim Demo)
-
-
-
-### Backend (server.py)
+### Phase 1 — Core MVP (Completed)
 - ✅ JWT auth (login, logout, me, register)
-- ✅ Users CRUD + role management
+- ✅ Users CRUD + role management (7 roles)
 - ✅ Members CRUD (auto-generated TW-XXX IDs)
 - ✅ Contributions (monthly tracking, receipt numbers RCP-YYYY-NNNN)
 - ✅ Contribution status API (month/year grid view)
@@ -75,65 +53,83 @@ Build a complete Charity & Membership Management Platform that digitizes member 
 - ✅ Auto cashbook entries on contribution record and benefit payment
 - ✅ Committee management
 - ✅ Meeting management (schedule, minutes, resolutions)
-- ✅ Dashboard stats API
-- ✅ Monthly collections chart API
+- ✅ Dashboard stats API + monthly collections chart
 - ✅ Reports (members, contributions by year, benefits summary)
-- ✅ Admin seeding on startup + test_credentials.md auto-written
+- ✅ Bulk member import — CSV & Excel (.csv/.xlsx/.xls)
+- ✅ PDF receipt download — GET /api/contributions/{id}/receipt
+- ✅ Demo data seeder (15 members, 4 months contributions)
+- ✅ Admin seeding on startup
 
-### Frontend
-- ✅ Login page (Kerala tropical background)
-- ✅ Role-based sidebar navigation
-- ✅ Dashboard with stat cards and bar chart
-- ✅ Members list/table with search, filter, add/edit
-- ✅ Contributions monthly tracker with payment recording
-- ✅ Benefits with full approval workflow buttons
-- ✅ Medical Aid with status updates
-- ✅ Death Assistance case management
-- ✅ Cashbook/Financials with credit/debit entries
-- ✅ Committee formation with position management
-- ✅ Meetings scheduling and minutes recording
-- ✅ Reports with charts (member pie, contribution bar, benefits breakdown)
+### Phase 2 — Completed (2026-06)
+- ✅ Export Reports to Excel — GET /api/reports/export/excel?year=YYYY
+  - 4 sheets: Contributions, Benefits, Cashbook, Members
+- ✅ Export Reports to PDF — GET /api/reports/export/pdf?year=YYYY
+  - Annual summary + monthly contribution table
+- ✅ Twilio Notifications — SMS & WhatsApp reminders for contribution defaulters
+  - GET /api/notifications/defaulters?month=M&year=YYYY
+  - POST /api/notifications/send-reminders (graceful mock mode when Twilio not configured)
+  - Logs notification attempts in `notification_logs` collection
+- ✅ Annual Audit Module
+  - GET /api/audit/report?year=YYYY (financial summary, read-only)
+  - POST /api/audit/sign-off (Auditor role ONLY — one per auditor per year)
+  - GET /api/audit/sign-offs (all roles can view)
+  - Stored in `audit_sign_offs` collection
+
+### Frontend Pages
+- ✅ Login, Dashboard, Members, Contributions, Benefits, Medical Aid, Death Assistance
+- ✅ Cashbook/Financials, Committee, Meetings, Reports
 - ✅ User Management
+- ✅ Notifications (new — Phase 2)
+- ✅ Audit (new — Phase 2)
 
-## Test Results (Iteration 1)
-- Backend: 100% (31/31 tests passed)
-- Frontend: 95% - all pages load, login/logout works, add member works
+## Key API Endpoints
+- POST `/api/auth/login`
+- GET/POST `/api/members`
+- GET `/api/members/import-template`
+- POST `/api/members/import`
+- GET/POST `/api/contributions`
+- GET `/api/contributions/{cid}/receipt`
+- GET `/api/reports/export/excel?year=YYYY`
+- GET `/api/reports/export/pdf?year=YYYY`
+- GET `/api/notifications/defaulters?month=M&year=YYYY`
+- POST `/api/notifications/send-reminders`
+- GET `/api/audit/report?year=YYYY`
+- POST `/api/audit/sign-off` (auditor only)
+- GET `/api/audit/sign-offs`
+
+## DB Collections
+- users, members, contributions, benefits, medical_aid, death_assistance
+- cashbook, committees, meetings
+- notification_logs (new Phase 2)
+- audit_sign_offs (new Phase 2)
+
+## Environment Variables (backend/.env)
+- MONGO_URL, DB_NAME, JWT_SECRET, ADMIN_EMAIL, ADMIN_PASSWORD, FRONTEND_URL
+- TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_FROM_PHONE, TWILIO_WHATSAPP_FROM (optional — mock mode when absent)
 
 ## Prioritized Backlog
 
-### P0 (Critical — already done)
-- Member management ✅
-- Contribution tracking ✅
-- Dashboard ✅
-- Auth ✅
-
-### P1 (Important — already done)
-- Benefits management ✅
-- Medical Aid ✅
-- Death Assistance ✅
-- Cashbook ✅
-- Committee ✅
-- Meetings ✅
-- Reports ✅
-- User Management ✅
-
-### P2 (Future Enhancements)
-- PDF receipt generation for contributions
-- Bulk contribution upload (CSV)
-- SMS/WhatsApp/Email notifications (defer Phase 2)
-- Mobile app
+### P1 (Next sprint)
 - QR Code Member Card
 - UPI Payment Integration
+- Meeting Minutes & Resolutions enhancement
+- Committee Handover records
+
+### P2 (Future)
+- Mobile App integration
 - WhatsApp Bot
 - E-signatures / Online Voting
-- Audit trail log
-- Annual audit module with auditor approval
-- Member self-service portal (contribute online)
-- Public charity portal
+- Public Charity Portal
+- Donation Gateway
+- Volunteer Management
+- CSR Sponsorship Tracking
+- Member self-service portal (online contributions)
 
-## Next Tasks
-1. PDF receipt download for contributions
-2. Bulk member import from CSV/Excel
-3. Notification system (SMS/WhatsApp via Twilio)
-4. Audit module (auditor role read-only views + audit report)
-5. Member self-portal (member can see own contributions and apply for benefits)
+## Test Results
+- Iteration 1: Backend 100% (31/31), Frontend 95%
+- Iteration 2: Backend 100%, Frontend 100%
+- Iteration 3 (Phase 2): Backend 100% (16/16), Frontend 100%
+
+## Route Ordering Note
+When adding new backend routes, ALWAYS place literal paths BEFORE parameterized routes.
+Example: `/reports/export/excel` must precede `/reports/contributions/{year}`.
