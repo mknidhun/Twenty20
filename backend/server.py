@@ -448,9 +448,6 @@ async def download_member_qr_card(mid: str, user: dict = Depends(get_current_use
         media_type="application/pdf",
         headers={"Content-Disposition": f"attachment; filename=MemberCard_{name_slug}.pdf"}
     )
-    doc = await db.members.find_one({"_id": ObjectId(mid)})
-    if not doc: raise HTTPException(404, "Member not found")
-    return s(doc)
 
 @api_router.put("/members/{mid}")
 async def update_member(mid: str, data: MemberUpdate, user: dict = Depends(require_roles("super_admin", "secretary", "treasurer"))):

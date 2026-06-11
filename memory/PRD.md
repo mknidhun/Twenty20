@@ -75,6 +75,22 @@ Build a complete Charity & Membership Management Platform that digitizes member 
   - GET /api/audit/sign-offs (all roles can view)
   - Stored in `audit_sign_offs` collection
 
+### P1 Features — Completed (2026-06)
+- ✅ QR Code Member Card — GET /api/members/{mid}/qr-card
+  - PDF wallet card with member name, ID, mobile + QR code (plain text for offline verification)
+  - Download button in every Members row
+- ✅ Meeting Minutes & Resolutions Enhancement
+  - Structured resolutions_list: [{text, status: passed|failed|tabled}]
+  - GET /api/meetings/{mid}/minutes-pdf — PDF export of full meeting minutes + resolutions
+  - MinutesDialog updated with Add/Remove resolution items and status dropdown
+  - PDF button per meeting row
+- ✅ Committee Handover Records
+  - POST /api/committee/handovers — record handover with full asset checklist
+  - GET /api/committee/handovers — list all handovers
+  - Documents checklist (8 items) + Registers checklist (6 items)
+  - Fund balance at handover, outstanding items, notes
+  - Stored in `committee_handovers` collection
+
 ### Frontend Pages
 - ✅ Login, Dashboard, Members, Contributions, Benefits, Medical Aid, Death Assistance
 - ✅ Cashbook/Financials, Committee, Meetings, Reports
@@ -109,11 +125,11 @@ Build a complete Charity & Membership Management Platform that digitizes member 
 
 ## Prioritized Backlog
 
-### P1 (Next sprint)
-- QR Code Member Card
-- UPI Payment Integration
-- Meeting Minutes & Resolutions enhancement
-- Committee Handover records
+### P1 — All Completed
+- QR Code Member Card (DONE)
+- Meeting Minutes & Resolutions enhancement (DONE)
+- Committee Handover records (DONE)
+- UPI Payment Integration (skipped by user — revisit when needed)
 
 ### P2 (Future)
 - Mobile App integration
