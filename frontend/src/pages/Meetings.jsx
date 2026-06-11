@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import api, { formatError } from "@/utils/api";
 import { MEETINGS } from "@/constants/testIds";
-import { Plus, X, CalendarBlank, Users, CheckCircle } from "@phosphor-icons/react";
+import { Plus, X, CalendarBlank, CheckCircle, Trash, FilePdf } from "@phosphor-icons/react";
 import { useAuth } from "@/contexts/AuthContext";
 
 const MEETING_TYPES = ["executive", "annual_general", "emergency"];
@@ -9,6 +9,7 @@ const STATUS_MAP = {
   scheduled: "badge-pending", completed: "badge-paid", cancelled: "badge-rejected"
 };
 const TYPE_LABELS = { executive: "Executive Committee", annual_general: "Annual General Body", emergency: "Emergency" };
+const RESOLUTION_STATUSES = ["passed", "failed", "tabled"];
 
 function MeetingDialog({ onSave, onClose }) {
   const [form, setForm] = useState({
@@ -82,10 +83,21 @@ function MeetingDialog({ onSave, onClose }) {
 function MinutesDialog({ meeting, onSave, onClose }) {
   const [form, setForm] = useState({
     minutes: meeting.minutes || "",
-    resolutions: meeting.resolutions || "",
-    status: meeting.status || "scheduled"
+    status: meeting.status || "scheduled",
+    resolutions_list: meeting.resolutions_list || []
   });
   const [loading, setLoading] = useState(false);
+
+  const addResolution = () => setForm(p => ({
+    ...p, resolutions_list: [...p.resolutions_list, { text: "", status: "passed" }]
+  }));
+  const removeResolution = (i) => setForm(p => ({
+    ...p, resolutions_list: p.resolutions_list.filter((_, idx) => idx !== i)
+  }));
+  const updateResolution = (i, k, v) => setForm(p => ({
+    ...p,
+    resolutions_list: p.resolutions_list.map((r, idx) => idx === i ? { ...r, [k]: v } : r)
+  }));
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -100,11 +112,13 @@ function MinutesDialog({ meeting, onSave, onClose }) {
     }
   };
 
+  const statusColors = { passed: "text-green-700 bg-green-50 border-green-200", failed: "text-red-700 bg-red-50 border-red-200", tabled: "text-amber-700 bg-amber-50 border-amber-200" };
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-stone-900/40 p-4">
-      <div className="bg-white rounded-lg shadow-lg w-full max-w-lg max-h-[90vh] overflow-y-auto">
+      <div className="bg-white rounded-lg shadow-lg w-full max-w-xl max-h-[90vh] overflow-y-auto">
         <div className="flex items-center justify-between px-5 py-4 border-b border-stone-200 sticky top-0 bg-white">
-          <h3 className="font-semibold text-stone-900 font-heading">Update Minutes — {meeting.title}</h3>
+          <h3 className="font-semibold text-stone-900 font-heading">Minutes — {meeting.title}</h3>
           <button onClick={onClose} className="text-stone-400 hover:text-stone-600"><X size={18} /></button>
         </div>
         <form onSubmit={handleSubmit} className="p-5 space-y-4">
@@ -118,22 +132,58 @@ function MinutesDialog({ meeting, onSave, onClose }) {
             </select>
           </div>
           <div>
-            <label className="block text-sm font-medium text-stone-700 mb-1">Minutes</label>
+            <label className="block text-sm font-medium text-stone-700 mb-1">Minutes of Meeting</label>
             <textarea value={form.minutes} onChange={e => setForm(p => ({...p, minutes: e.target.value}))} rows={4}
-              placeholder="Record the meeting minutes..."
+              placeholder="Record the proceedings of the meeting..."
               className="w-full border border-stone-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-700/30" />
           </div>
+
+          {/* Structured Resolutions */}
           <div>
-            <label className="block text-sm font-medium text-stone-700 mb-1">Resolutions</label>
-            <textarea value={form.resolutions} onChange={e => setForm(p => ({...p, resolutions: e.target.value}))} rows={3}
-              placeholder="List resolutions passed..."
-              className="w-full border border-stone-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-700/30" />
+            <div className="flex items-center justify-between mb-2">
+              <label className="text-sm font-medium text-stone-700">Resolutions</label>
+              <button type="button" onClick={addResolution}
+                className="flex items-center gap-1 text-xs text-green-700 hover:text-green-900 font-medium">
+                <Plus size={13} weight="bold" /> Add Resolution
+              </button>
+            </div>
+            {form.resolutions_list.length === 0 ? (
+              <p className="text-xs text-stone-400 italic">No resolutions yet. Click "Add Resolution" to begin.</p>
+            ) : (
+              <div className="space-y-2">
+                {form.resolutions_list.map((res, i) => (
+                  <div key={i} className="flex gap-2 items-start">
+                    <span className="text-xs font-bold text-stone-400 mt-2.5 w-5 flex-shrink-0">{i+1}.</span>
+                    <input
+                      value={res.text}
+                      onChange={e => updateResolution(i, "text", e.target.value)}
+                      placeholder="Resolution text..."
+                      data-testid={`resolution-text-${i}`}
+                      className="flex-1 border border-stone-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-700/30"
+                    />
+                    <select
+                      value={res.status}
+                      onChange={e => updateResolution(i, "status", e.target.value)}
+                      data-testid={`resolution-status-${i}`}
+                      className={`border rounded-md px-2 py-2 text-xs font-medium focus:outline-none ${statusColors[res.status]}`}
+                    >
+                      {RESOLUTION_STATUSES.map(s => <option key={s} value={s}>{s.charAt(0).toUpperCase()+s.slice(1)}</option>)}
+                    </select>
+                    <button type="button" onClick={() => removeResolution(i)}
+                      className="p-2 text-stone-400 hover:text-red-600 hover:bg-red-50 rounded transition-colors flex-shrink-0">
+                      <Trash size={13} />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
+
           <div className="flex gap-3">
             <button type="button" onClick={onClose} className="flex-1 px-4 py-2 border border-stone-300 text-stone-700 rounded-md text-sm hover:bg-stone-50">Cancel</button>
             <button type="submit" disabled={loading}
               className="flex-1 px-4 py-2 bg-green-800 text-white rounded-md text-sm font-medium hover:bg-green-900 disabled:opacity-60">
-              {loading ? "Saving..." : "Save"}
+              {loading ? "Saving..." : "Save Minutes"}
             </button>
           </div>
         </form>
@@ -158,6 +208,18 @@ export default function Meetings() {
     if (!window.confirm("Delete this meeting?")) return;
     await api.delete(`/meetings/${id}`);
     load();
+  };
+
+  const handleDownloadMinutes = async (m) => {
+    try {
+      const resp = await api.get(`/meetings/${m.id}/minutes-pdf`, { responseType: "blob" });
+      const url = URL.createObjectURL(new Blob([resp.data], { type: "application/pdf" }));
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `Minutes_${m.title.replace(/ /g,"_").slice(0,30)}.pdf`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch { alert("Failed to download minutes PDF"); }
   };
 
   const filtered = meetings.filter(m => filterStatus === "all" || m.status === filterStatus);
@@ -206,9 +268,9 @@ export default function Meetings() {
                     <th>Title</th>
                     <th>Type</th>
                     <th>Date</th>
-                    <th>Agenda</th>
+                    <th>Resolutions</th>
                     <th>Status</th>
-                    {canWrite && <th>Actions</th>}
+                    <th>Actions</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -219,28 +281,40 @@ export default function Meetings() {
                         <span className="text-xs bg-stone-100 px-2 py-0.5 rounded">{TYPE_LABELS[m.meeting_type] || m.meeting_type}</span>
                       </td>
                       <td>{m.scheduled_date ? new Date(m.scheduled_date).toLocaleDateString("en-IN") : "-"}</td>
-                      <td className="max-w-xs truncate text-stone-500">{m.agenda}</td>
+                      <td>
+                        {m.resolutions_list && m.resolutions_list.length > 0 ? (
+                          <span className="text-xs text-stone-600">{m.resolutions_list.length} resolution{m.resolutions_list.length > 1 ? "s" : ""} ({m.resolutions_list.filter(r=>r.status==="passed").length} passed)</span>
+                        ) : (
+                          <span className="text-xs text-stone-400 italic">—</span>
+                        )}
+                      </td>
                       <td>
                         <span className={`inline-flex px-2 py-0.5 text-xs font-medium rounded border ${STATUS_MAP[m.status]}`}>
                           {m.status}
                         </span>
                       </td>
-                      {canWrite && (
-                        <td>
-                          <div className="flex gap-2">
+                      <td>
+                        <div className="flex gap-1.5">
+                          {canWrite && (
                             <button onClick={() => setDialog(m)}
                               className="px-2.5 py-1 text-xs bg-stone-100 text-stone-700 rounded hover:bg-stone-200">
                               Minutes
                             </button>
-                            {user?.role === "super_admin" && (
-                              <button onClick={() => handleDelete(m.id)}
-                                className="p-1.5 text-stone-400 hover:text-red-600 hover:bg-red-50 rounded transition-colors">
-                                <X size={13} />
-                              </button>
-                            )}
-                          </div>
-                        </td>
-                      )}
+                          )}
+                          <button onClick={() => handleDownloadMinutes(m)}
+                            data-testid="minutes-pdf-btn"
+                            title="Download Minutes PDF"
+                            className="p-1.5 text-stone-400 hover:text-red-700 hover:bg-red-50 rounded transition-colors">
+                            <FilePdf size={14} />
+                          </button>
+                          {canWrite && user?.role === "super_admin" && (
+                            <button onClick={() => handleDelete(m.id)}
+                              className="p-1.5 text-stone-400 hover:text-red-600 hover:bg-red-50 rounded transition-colors">
+                              <X size={13} />
+                            </button>
+                          )}
+                        </div>
+                      </td>
                     </tr>
                   ))}
                 </tbody>

@@ -2,7 +2,7 @@ import { useEffect, useState, useRef } from "react";
 import api, { formatError } from "@/utils/api";
 import { useAuth } from "@/contexts/AuthContext";
 import { MEMBERS } from "@/constants/testIds";
-import { Plus, MagnifyingGlass, PencilSimple, Trash, X, UploadSimple, DownloadSimple, Spinner, CheckCircle, Warning } from "@phosphor-icons/react";
+import { Plus, MagnifyingGlass, PencilSimple, Trash, X, UploadSimple, DownloadSimple, Spinner, CheckCircle, Warning, QrCode } from "@phosphor-icons/react";
 
 const STATUS_COLORS = {
   active: "badge-active", inactive: "badge-inactive",
@@ -245,6 +245,20 @@ export default function Members() {
     load();
   };
 
+  const handleDownloadCard = async (member) => {
+    try {
+      const resp = await api.get(`/members/${member.id}/qr-card`, { responseType: "blob" });
+      const url = URL.createObjectURL(new Blob([resp.data], { type: "application/pdf" }));
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `MemberCard_${member.name.replace(/ /g,"_")}.pdf`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch {
+      alert("Failed to download member card");
+    }
+  };
+
   const handleSeedDemo = async () => {
     if (!window.confirm("This will load 15 demo members with contribution history. Continue?")) return;
     setSeeding(true);
@@ -335,7 +349,7 @@ export default function Members() {
                   <th className="text-left">Address</th>
                   <th className="text-left">Joining Date</th>
                   <th className="text-left">Status</th>
-                  {canWrite && <th className="text-right">Actions</th>}
+                  <th className="text-right">Actions</th>
                 </tr>
               </thead>
               <tbody>
@@ -354,6 +368,11 @@ export default function Members() {
                     {canWrite && (
                       <td className="text-right">
                         <div className="flex items-center justify-end gap-2">
+                          <button onClick={() => handleDownloadCard(m)} data-testid="qr-card-btn"
+                            title="Download Member QR Card"
+                            className="p-1.5 text-stone-400 hover:text-green-700 hover:bg-green-50 rounded transition-colors">
+                            <QrCode size={15} />
+                          </button>
                           <button onClick={() => setDialog(m)} data-testid={MEMBERS.editButton}
                             className="p-1.5 text-stone-400 hover:text-green-700 hover:bg-green-50 rounded transition-colors">
                             <PencilSimple size={15} />
@@ -365,6 +384,15 @@ export default function Members() {
                             </button>
                           )}
                         </div>
+                      </td>
+                    )}
+                    {!canWrite && (
+                      <td className="text-right">
+                        <button onClick={() => handleDownloadCard(m)} data-testid="qr-card-btn"
+                          title="Download Member QR Card"
+                          className="p-1.5 text-stone-400 hover:text-green-700 hover:bg-green-50 rounded transition-colors">
+                          <QrCode size={15} />
+                        </button>
                       </td>
                     )}
                   </tr>

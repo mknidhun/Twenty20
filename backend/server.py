@@ -12,6 +12,7 @@ from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from fpdf import FPDF
 import os, jwt, bcrypt, logging, io, pandas as pd
+import qrcode
 
 # Twilio (optional — graceful fallback if credentials not configured)
 try:
@@ -223,8 +224,19 @@ class MeetingCreate(BaseModel):
 class MeetingUpdate(BaseModel):
     minutes: Optional[str] = None
     resolutions: Optional[str] = None
+    resolutions_list: Optional[List[dict]] = None
     status: Optional[str] = None
     attendees: Optional[List[str]] = None
+
+class CommitteeHandoverCreate(BaseModel):
+    from_year: int
+    to_year: int
+    handover_date: str
+    fund_balance: float
+    documents_checklist: List[dict]
+    registers_checklist: List[dict]
+    outstanding_items: Optional[str] = None
+    notes: Optional[str] = None
 
 class AuditSignOffCreate(BaseModel):
     year: int
@@ -354,8 +366,88 @@ async def import_template():
         headers={"Content-Disposition": "attachment; filename=members_template.csv"}
     )
 
-@api_router.get("/members/{mid}")
-async def get_member(mid: str, user: dict = Depends(get_current_user)):
+def build_member_qr_card(member: dict) -> bytes:
+    """Generate a PDF ID card with embedded QR code for a member."""
+    qr_data = (
+        f"Twenty20 Charity Group Wariyad\n"
+        f"Name: {member.get('name','')}\n"
+        f"Member ID: {member.get('member_id','')}\n"
+        f"Mobile: {member.get('mobile','')}"
+    )
+    qr = qrcode.QRCode(version=2, box_size=6, border=2)
+    qr.add_data(qr_data)
+    qr.make(fit=True)
+    qr_img = qr.make_image(fill_color="#166534", back_color="white")
+    qr_buf = io.BytesIO()
+    qr_img.save(qr_buf, format="PNG")
+    qr_buf.seek(0)
+
+    pdf = FPDF(orientation="L", format=(54, 86))  # Landscape credit-card size (mm)
+    pdf.set_margins(0, 0, 0)
+    pdf.add_page()
+
+    # Green header band
+    pdf.set_fill_color(22, 101, 52)
+    pdf.rect(0, 0, 86, 14, "F")
+    pdf.set_text_color(255, 255, 255)
+    pdf.set_font("Helvetica", "B", 7)
+    pdf.set_y(2)
+    pdf.cell(0, 5, "TWENTY20 CHARITY GROUP  WARIYAD", align="C", ln=True)
+    pdf.set_font("Helvetica", "", 6)
+    pdf.cell(0, 4, "Verified Member Card", align="C", ln=True)
+
+    # Left side — member details
+    pdf.set_text_color(28, 25, 23)
+    pdf.set_y(17)
+    pdf.set_x(3)
+    pdf.set_font("Helvetica", "B", 11)
+    pdf.cell(48, 7, member.get("name", ""), ln=True)
+    pdf.set_x(3)
+    pdf.set_font("Helvetica", "B", 8)
+    pdf.set_text_color(22, 101, 52)
+    pdf.cell(48, 5, member.get("member_id", ""), ln=True)
+    pdf.set_x(3)
+    pdf.set_text_color(80, 80, 80)
+    pdf.set_font("Helvetica", "", 7)
+    pdf.cell(48, 4, f"Mobile: {member.get('mobile', '-')}", ln=True)
+    pdf.set_x(3)
+    pdf.cell(48, 4, f"Joined: {member.get('joining_date', '-')}", ln=True)
+
+    # Status badge
+    pdf.set_x(3)
+    pdf.set_y(42)
+    pdf.set_fill_color(220, 252, 231)
+    pdf.set_draw_color(22, 101, 52)
+    pdf.set_text_color(22, 101, 52)
+    pdf.set_font("Helvetica", "B", 6)
+    pdf.cell(20, 5, "  ACTIVE", border=1, fill=True, align="C")
+
+    # QR code on right
+    pdf.image(qr_buf, x=54, y=14, w=29, h=29)
+
+    # Footer
+    pdf.set_fill_color(22, 101, 52)
+    pdf.rect(0, 49, 86, 5, "F")
+    pdf.set_text_color(255, 255, 255)
+    pdf.set_font("Helvetica", "", 5)
+    pdf.set_y(50)
+    pdf.cell(0, 3, "This card is the property of Twenty20 Charity Group Wariyad", align="C")
+
+    return bytes(pdf.output())
+
+
+@api_router.get("/members/{mid}/qr-card")
+async def download_member_qr_card(mid: str, user: dict = Depends(get_current_user)):
+    member = await db.members.find_one({"_id": ObjectId(mid)})
+    if not member:
+        raise HTTPException(404, "Member not found")
+    pdf_bytes = build_member_qr_card(member)
+    name_slug = member.get("name", "member").replace(" ", "_")
+    return StreamingResponse(
+        io.BytesIO(pdf_bytes),
+        media_type="application/pdf",
+        headers={"Content-Disposition": f"attachment; filename=MemberCard_{name_slug}.pdf"}
+    )
     doc = await db.members.find_one({"_id": ObjectId(mid)})
     if not doc: raise HTTPException(404, "Member not found")
     return s(doc)
@@ -603,6 +695,29 @@ async def create_committee(data: CommitteeCreate, user: dict = Depends(require_r
     doc.pop("_id", None)
     return doc
 
+@api_router.get("/committee/handovers")
+async def list_handovers(user: dict = Depends(get_current_user)):
+    docs = await db.committee_handovers.find().sort("handover_date", -1).to_list(100)
+    return ss(docs)
+
+
+@api_router.post("/committee/handovers")
+async def create_handover(
+    data: CommitteeHandoverCreate,
+    user: dict = Depends(require_roles("super_admin", "president", "secretary"))
+):
+    doc = {
+        **data.model_dump(),
+        "recorded_by": user["id"],
+        "recorded_by_name": user["name"],
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    result = await db.committee_handovers.insert_one(doc)
+    doc["id"] = str(result.inserted_id)
+    doc.pop("_id", None)
+    return doc
+
+
 @api_router.put("/committee/{cid}")
 async def update_committee(cid: str, data: dict, user: dict = Depends(require_roles("super_admin", "president"))):
     await db.committee.update_one({"_id": ObjectId(cid)}, {"$set": data})
@@ -638,6 +753,151 @@ async def update_meeting(mid: str, data: MeetingUpdate, user: dict = Depends(get
 async def delete_meeting(mid: str, user: dict = Depends(require_roles("super_admin", "president", "secretary"))):
     await db.meetings.delete_one({"_id": ObjectId(mid)})
     return {"message": "Deleted"}
+
+
+def build_minutes_pdf(meeting: dict) -> bytes:
+    """Generate a PDF of meeting minutes and resolutions."""
+    TYPE_LABELS_PDF = {
+        "executive": "Executive Committee Meeting",
+        "annual_general": "Annual General Body Meeting",
+        "emergency": "Emergency Meeting",
+    }
+    pdf = FPDF()
+    pdf.set_margins(15, 15, 15)
+    pdf.add_page()
+
+    # Header
+    pdf.set_fill_color(22, 101, 52)
+    pdf.rect(0, 0, 210, 42, "F")
+    pdf.set_text_color(255, 255, 255)
+    pdf.set_y(10)
+    pdf.set_font("Helvetica", "B", 16)
+    pdf.cell(0, 9, "TWENTY20 CHARITY GROUP", ln=True, align="C")
+    pdf.set_font("Helvetica", "B", 10)
+    pdf.cell(0, 6, "WARIYAD", ln=True, align="C")
+    pdf.set_font("Helvetica", "", 8)
+    pdf.cell(0, 5, "Meeting Minutes", ln=True, align="C")
+
+    pdf.set_y(50)
+    pdf.set_text_color(28, 25, 23)
+
+    # Meeting details
+    meeting_type = TYPE_LABELS_PDF.get(meeting.get("meeting_type", ""), meeting.get("meeting_type", ""))
+    pdf.set_font("Helvetica", "B", 13)
+    pdf.set_text_color(22, 101, 52)
+    title = meeting.get("title", "")
+    pdf.multi_cell(0, 8, title, align="C")
+    pdf.ln(2)
+    pdf.set_draw_color(200, 200, 200)
+    pdf.line(15, pdf.get_y(), 195, pdf.get_y())
+    pdf.ln(4)
+
+    # Meta row
+    pdf.set_text_color(28, 25, 23)
+    for label, val in [
+        ("Meeting Type", meeting_type),
+        ("Date", meeting.get("scheduled_date", "")),
+        ("Status", meeting.get("status", "").title()),
+    ]:
+        pdf.set_font("Helvetica", "B", 10)
+        pdf.cell(50, 6, label + ":", ln=False)
+        pdf.set_font("Helvetica", "", 10)
+        pdf.cell(0, 6, val, ln=True)
+
+    # Attendees
+    attendees = meeting.get("attendees", [])
+    if attendees:
+        pdf.ln(3)
+        pdf.set_font("Helvetica", "B", 10)
+        pdf.cell(0, 6, f"Attendees ({len(attendees)}):", ln=True)
+        pdf.set_font("Helvetica", "", 10)
+        pdf.multi_cell(0, 6, ", ".join(attendees))
+
+    # Agenda
+    pdf.ln(3)
+    pdf.set_font("Helvetica", "B", 11)
+    pdf.set_text_color(22, 101, 52)
+    pdf.cell(0, 7, "AGENDA", ln=True)
+    pdf.set_draw_color(200, 200, 200)
+    pdf.line(15, pdf.get_y(), 195, pdf.get_y())
+    pdf.ln(3)
+    pdf.set_text_color(28, 25, 23)
+    pdf.set_font("Helvetica", "", 10)
+    pdf.multi_cell(0, 6, meeting.get("agenda", ""))
+
+    # Minutes
+    if meeting.get("minutes"):
+        pdf.ln(4)
+        pdf.set_font("Helvetica", "B", 11)
+        pdf.set_text_color(22, 101, 52)
+        pdf.cell(0, 7, "MINUTES OF MEETING", ln=True)
+        pdf.line(15, pdf.get_y(), 195, pdf.get_y())
+        pdf.ln(3)
+        pdf.set_text_color(28, 25, 23)
+        pdf.set_font("Helvetica", "", 10)
+        pdf.multi_cell(0, 6, meeting.get("minutes", ""))
+
+    # Structured Resolutions
+    resolutions_list = meeting.get("resolutions_list", [])
+    if resolutions_list:
+        pdf.ln(4)
+        pdf.set_font("Helvetica", "B", 11)
+        pdf.set_text_color(22, 101, 52)
+        pdf.cell(0, 7, "RESOLUTIONS", ln=True)
+        pdf.line(15, pdf.get_y(), 195, pdf.get_y())
+        pdf.ln(3)
+        for i, res in enumerate(resolutions_list, 1):
+            status = res.get("status", "passed").upper()
+            pdf.set_font("Helvetica", "B", 10)
+            pdf.set_text_color(28, 25, 23)
+            pdf.cell(8, 6, f"{i}.", ln=False)
+            pdf.set_font("Helvetica", "", 10)
+            # Color-code status
+            if status == "PASSED":
+                pdf.set_text_color(22, 101, 52)
+            elif status == "FAILED":
+                pdf.set_text_color(185, 28, 28)
+            else:
+                pdf.set_text_color(120, 88, 0)
+            pdf.cell(25, 6, f"[{status}]", ln=False)
+            pdf.set_text_color(28, 25, 23)
+            pdf.set_font("Helvetica", "", 10)
+            pdf.multi_cell(0, 6, res.get("text", ""))
+    elif meeting.get("resolutions"):
+        # Fallback to legacy text resolutions
+        pdf.ln(4)
+        pdf.set_font("Helvetica", "B", 11)
+        pdf.set_text_color(22, 101, 52)
+        pdf.cell(0, 7, "RESOLUTIONS", ln=True)
+        pdf.line(15, pdf.get_y(), 195, pdf.get_y())
+        pdf.ln(3)
+        pdf.set_text_color(28, 25, 23)
+        pdf.set_font("Helvetica", "", 10)
+        pdf.multi_cell(0, 6, meeting.get("resolutions", ""))
+
+    # Footer
+    pdf.ln(10)
+    pdf.set_text_color(120, 113, 108)
+    pdf.set_font("Helvetica", "I", 8)
+    pdf.set_draw_color(231, 229, 228)
+    pdf.line(15, pdf.get_y(), 195, pdf.get_y())
+    pdf.ln(4)
+    pdf.cell(0, 5, f"Minutes recorded on {datetime.now().strftime('%d %B %Y')} - Twenty20 Charity Group Wariyad", ln=True, align="C")
+    return bytes(pdf.output())
+
+
+@api_router.get("/meetings/{mid}/minutes-pdf")
+async def download_minutes_pdf(mid: str, user: dict = Depends(get_current_user)):
+    meeting = await db.meetings.find_one({"_id": ObjectId(mid)})
+    if not meeting:
+        raise HTTPException(404, "Meeting not found")
+    pdf_bytes = build_minutes_pdf(meeting)
+    title_slug = meeting.get("title", "minutes").replace(" ", "_")[:30]
+    return StreamingResponse(
+        io.BytesIO(pdf_bytes),
+        media_type="application/pdf",
+        headers={"Content-Disposition": f"attachment; filename=Minutes_{title_slug}.pdf"}
+    )
 
 # ── DASHBOARD ─────────────────────────────────────────────────────────────────
 @api_router.get("/dashboard/stats")
