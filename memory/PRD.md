@@ -36,7 +36,31 @@ Build a complete Charity & Membership Management Platform that digitizes member 
 - Reports (member, contribution, benefits)
 - User management with role assignment
 
-## What's Been Implemented (2026-06)
+## What's Been Implemented (2026-06, Iteration 2 update)
+
+### New Features Added
+- ✅ Bulk member import — CSV & Excel (.csv/.xlsx/.xls) with template download
+  - POST /api/members/import
+  - GET /api/members/import-template (CSV template download)
+  - Frontend: drag-and-drop file upload dialog, shows import results
+- ✅ PDF receipt download — GET /api/contributions/{id}/receipt
+  - fpdf2-generated A4 PDF with header, member details, amount box
+  - Download button next to all paid contributions
+- ✅ Demo data seeding — POST /api/demo/seed (admin only)
+  - 15 realistic member profiles with Indian names
+  - 4 months of contribution history
+  - Sample marriage benefit (committee_approved) and medical aid (approved)
+- ✅ Load Demo Data button in Members page (super_admin only)
+- ✅ Fixed FastAPI route ordering bug: /members/import-template must precede /members/{mid}
+
+### Test Data Status
+- 23 total members (15 demo + 3 CSV import test + manual)
+- 60+ cashbook entries
+- Fund balance: ~₹7,800
+- 1 pending marriage benefit (Mohammed Ashraf — committee_approved, needs treasurer to mark paid)
+- 1 medical aid approved (Basheer Ibrahim Demo)
+
+
 
 ### Backend (server.py)
 - ✅ JWT auth (login, logout, me, register)
