@@ -2,16 +2,19 @@ import { useEffect, useState } from "react";
 import api from "@/utils/api";
 import { useAuth } from "@/contexts/AuthContext";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, Legend } from "recharts";
+import { FileXls, FilePdf } from "@phosphor-icons/react";
 
 const MONTHS = ["","Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
 const COLORS = ["#166534","#D97706","#DC2626","#2563EB","#7C3AED","#059669"];
 
 export default function Reports() {
+  const { user } = useAuth();
   const [memberReport, setMemberReport] = useState(null);
   const [contribReport, setContribReport] = useState(null);
   const [benefitReport, setBenefitReport] = useState(null);
   const [year, setYear] = useState(new Date().getFullYear());
   const [loading, setLoading] = useState(true);
+  const [exporting, setExporting] = useState(null);
   const years = Array.from({length: 5}, (_, i) => new Date().getFullYear() - i);
 
   useEffect(() => {
@@ -26,6 +29,27 @@ export default function Reports() {
       setBenefitReport(b.data);
     }).finally(() => setLoading(false));
   }, [year]);
+
+  const handleExport = async (type) => {
+    setExporting(type);
+    try {
+      const resp = await api.get(`/reports/export/${type}?year=${year}`, { responseType: "blob" });
+      const ext = type === "excel" ? "xlsx" : "pdf";
+      const mime = type === "excel"
+        ? "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        : "application/pdf";
+      const url = URL.createObjectURL(new Blob([resp.data], { type: mime }));
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `Twenty20_Wariyad_Report_${year}.${ext}`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      alert(`Export failed: ${err.message}`);
+    } finally {
+      setExporting(null);
+    }
+  };
 
   if (loading) return <div className="p-8 text-center text-stone-400">Loading reports...</div>;
 
@@ -49,10 +73,30 @@ export default function Reports() {
           <h1 className="text-2xl font-bold text-stone-900 font-heading">Reports</h1>
           <p className="text-stone-500 text-sm">Financial and membership analytics</p>
         </div>
-        <select value={year} onChange={e => setYear(+e.target.value)}
-          className="border border-stone-300 rounded-md px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-green-700/30">
-          {years.map(y => <option key={y} value={y}>{y}</option>)}
-        </select>
+        <div className="flex items-center gap-2 flex-wrap">
+          <select value={year} onChange={e => setYear(+e.target.value)}
+            className="border border-stone-300 rounded-md px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-green-700/30">
+            {years.map(y => <option key={y} value={y}>{y}</option>)}
+          </select>
+          <button
+            onClick={() => handleExport("excel")}
+            disabled={exporting === "excel"}
+            data-testid="export-excel-btn"
+            className="flex items-center gap-1.5 px-3 py-2 bg-green-800 text-white text-sm font-medium rounded-md hover:bg-green-900 disabled:opacity-50 transition-colors"
+          >
+            <FileXls size={16} />
+            {exporting === "excel" ? "Exporting..." : "Export Excel"}
+          </button>
+          <button
+            onClick={() => handleExport("pdf")}
+            disabled={exporting === "pdf"}
+            data-testid="export-pdf-btn"
+            className="flex items-center gap-1.5 px-3 py-2 bg-red-700 text-white text-sm font-medium rounded-md hover:bg-red-800 disabled:opacity-50 transition-colors"
+          >
+            <FilePdf size={16} />
+            {exporting === "pdf" ? "Exporting..." : "Export PDF"}
+          </button>
+        </div>
       </div>
 
       {/* Membership Stats */}

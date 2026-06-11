@@ -4,7 +4,7 @@ import { useState } from "react";
 import {
   HouseLine, Users, CurrencyInr, HandHeart, FirstAid,
   Skull, Notebook, UsersThree, CalendarBlank, ChartBar,
-  SignOut, List, X, UserGear, ShieldStar
+  SignOut, List, X, UserGear, ShieldStar, Bell, Scales
 } from "@phosphor-icons/react";
 import { LAYOUT, AUTH } from "@/constants/testIds";
 
@@ -19,6 +19,8 @@ const NAV = [
   { to: "/committee",        label: "Committee",       icon: UsersThree,    roles: ["super_admin","president","secretary"] },
   { to: "/meetings",         label: "Meetings",        icon: CalendarBlank, roles: ["super_admin","president","secretary","committee_member"] },
   { to: "/reports",          label: "Reports",         icon: ChartBar,      roles: ["super_admin","president","treasurer","secretary","auditor"] },
+  { to: "/notifications",    label: "Notifications",   icon: Bell,          roles: ["super_admin","president","secretary","treasurer"] },
+  { to: "/audit",            label: "Audit",           icon: Scales,        roles: ["super_admin","president","secretary","treasurer","auditor"] },
   { to: "/users",            label: "User Management", icon: UserGear,      roles: ["super_admin","secretary"] },
 ];
 

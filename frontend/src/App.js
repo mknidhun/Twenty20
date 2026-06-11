@@ -14,6 +14,8 @@ import Committee from "@/pages/Committee";
 import Meetings from "@/pages/Meetings";
 import Reports from "@/pages/Reports";
 import Users from "@/pages/Users";
+import Notifications from "@/pages/Notifications";
+import Audit from "@/pages/Audit";
 
 function ProtectedRoute({ children }) {
   const { user } = useAuth();
@@ -47,6 +49,8 @@ function AppRoutes() {
         <Route path="meetings" element={<Meetings />} />
         <Route path="reports" element={<Reports />} />
         <Route path="users" element={<Users />} />
+        <Route path="notifications" element={<Notifications />} />
+        <Route path="audit" element={<Audit />} />
       </Route>
     </Routes>
   );

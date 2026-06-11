@@ -13,6 +13,19 @@ from pathlib import Path
 from fpdf import FPDF
 import os, jwt, bcrypt, logging, io, pandas as pd
 
+# Twilio (optional — graceful fallback if credentials not configured)
+try:
+    from twilio.rest import Client as TwilioClient
+    _TWILIO_SID = os.environ.get("TWILIO_ACCOUNT_SID", "")
+    _TWILIO_TOKEN = os.environ.get("TWILIO_AUTH_TOKEN", "")
+    _TWILIO_FROM = os.environ.get("TWILIO_FROM_PHONE", "")
+    _TWILIO_WA_FROM = os.environ.get("TWILIO_WHATSAPP_FROM", "")
+    TWILIO_ENABLED = bool(_TWILIO_SID and _TWILIO_TOKEN and _TWILIO_FROM)
+except Exception:
+    TwilioClient = None
+    _TWILIO_FROM = _TWILIO_WA_FROM = ""
+    TWILIO_ENABLED = False
+
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
 
@@ -212,6 +225,15 @@ class MeetingUpdate(BaseModel):
     resolutions: Optional[str] = None
     status: Optional[str] = None
     attendees: Optional[List[str]] = None
+
+class AuditSignOffCreate(BaseModel):
+    year: int
+    remarks: str
+
+class NotificationSendReq(BaseModel):
+    month: int
+    year: int
+    message: Optional[str] = None
 
 # ── App ───────────────────────────────────────────────────────────────────────
 app = FastAPI(title="Twenty20 Wariyad API")
@@ -887,6 +909,369 @@ async def download_receipt(contrib_id: str, user: dict = Depends(get_current_use
         media_type="application/pdf",
         headers={"Content-Disposition": f"attachment; filename={rnum}.pdf"}
     )
+
+# ── EXPORT REPORTS ────────────────────────────────────────────────────────────
+_MONTH_NAMES_FULL = ["","January","February","March","April","May","June",
+                     "July","August","September","October","November","December"]
+_MONTH_NAMES_SHORT = ["","Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"]
+
+@api_router.get("/reports/export/excel")
+async def export_excel_report(
+    year: Optional[int] = None,
+    user: dict = Depends(require_roles("super_admin", "president", "treasurer", "secretary", "auditor"))
+):
+    yr = year or datetime.now().year
+    contributions = await db.contributions.find({"year": yr}).to_list(5000)
+    benefits = await db.benefits.find({}).to_list(2000)
+    cashbook = await db.cashbook.find({}).sort("created_at", 1).to_list(10000)
+    members = await db.members.find({}).to_list(1000)
+    member_map = {str(m["_id"]): m for m in members}
+
+    contrib_rows = [
+        {
+            "Receipt No": c.get("receipt_number", ""),
+            "Month": _MONTH_NAMES_SHORT[c.get("month", 1)],
+            "Year": c.get("year", yr),
+            "Member Name": member_map.get(c.get("member_id", ""), {}).get("name", "Unknown"),
+            "Amount (Rs)": c.get("amount", 0),
+            "Payment Method": c.get("payment_method", "").replace("_", " ").title(),
+            "Date Paid": c.get("paid_at", "")[:10] if c.get("paid_at") else "",
+        }
+        for c in contributions
+    ]
+    benefit_rows = [
+        {
+            "Benefit Type": b.get("benefit_type", "").replace("_", " ").title(),
+            "Member Name": b.get("member_name", ""),
+            "Amount (Rs)": b.get("amount", 0),
+            "Status": b.get("status", "").replace("_", " ").title(),
+            "Event Date": b.get("event_date", ""),
+            "Applied Date": b.get("created_at", "")[:10] if b.get("created_at") else "",
+        }
+        for b in benefits
+    ]
+    running_bal = 0
+    cashbook_rows = []
+    for e in cashbook:
+        running_bal += e["amount"] if e["entry_type"] == "credit" else -e["amount"]
+        cashbook_rows.append({
+            "Voucher No": e.get("voucher_number", ""),
+            "Date": e.get("date", ""),
+            "Description": e.get("description", ""),
+            "Category": e.get("category", "").replace("_", " ").title(),
+            "Type": "Credit" if e["entry_type"] == "credit" else "Debit",
+            "Credit (Rs)": e["amount"] if e["entry_type"] == "credit" else 0,
+            "Debit (Rs)": e["amount"] if e["entry_type"] == "debit" else 0,
+            "Balance (Rs)": round(running_bal, 2),
+        })
+    member_rows = [
+        {
+            "Member ID": m.get("member_id", ""),
+            "Name": m.get("name", ""),
+            "Mobile": m.get("mobile", ""),
+            "Address": m.get("address", ""),
+            "Joining Date": m.get("joining_date", ""),
+            "Status": m.get("status", "").title(),
+        }
+        for m in members
+    ]
+    buf = io.BytesIO()
+    with pd.ExcelWriter(buf, engine="openpyxl") as writer:
+        (pd.DataFrame(contrib_rows) if contrib_rows else pd.DataFrame(columns=["Receipt No","Month","Year","Member Name","Amount (Rs)","Payment Method","Date Paid"])).to_excel(writer, sheet_name=f"Contributions {yr}", index=False)
+        (pd.DataFrame(benefit_rows) if benefit_rows else pd.DataFrame(columns=["Benefit Type","Member Name","Amount (Rs)","Status","Event Date","Applied Date"])).to_excel(writer, sheet_name="Benefits", index=False)
+        (pd.DataFrame(cashbook_rows) if cashbook_rows else pd.DataFrame(columns=["Voucher No","Date","Description","Category","Type","Credit (Rs)","Debit (Rs)","Balance (Rs)"])).to_excel(writer, sheet_name="Cashbook", index=False)
+        (pd.DataFrame(member_rows) if member_rows else pd.DataFrame(columns=["Member ID","Name","Mobile","Address","Joining Date","Status"])).to_excel(writer, sheet_name="Members", index=False)
+    buf.seek(0)
+    return StreamingResponse(buf,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f"attachment; filename=Twenty20_Wariyad_Report_{yr}.xlsx"})
+
+
+@api_router.get("/reports/export/pdf")
+async def export_pdf_report(
+    year: Optional[int] = None,
+    user: dict = Depends(require_roles("super_admin", "president", "treasurer", "secretary", "auditor"))
+):
+    yr = year or datetime.now().year
+    contributions = await db.contributions.find({"year": yr}).to_list(5000)
+    benefits_paid = await db.benefits.find({"status": "paid"}).to_list(500)
+    medical_paid = await db.medical_aid.find({"status": "paid"}).to_list(500)
+    cashbook = await db.cashbook.find({}).to_list(10000)
+    members = await db.members.find({}).to_list(1000)
+
+    total_contrib = sum(c["amount"] for c in contributions)
+    total_credits = sum(e["amount"] for e in cashbook if e["entry_type"] == "credit")
+    total_debits = sum(e["amount"] for e in cashbook if e["entry_type"] == "debit")
+    balance = total_credits - total_debits
+    monthly = {}
+    for c in contributions:
+        m = c["month"]
+        if m not in monthly:
+            monthly[m] = {"count": 0, "amount": 0}
+        monthly[m]["count"] += 1
+        monthly[m]["amount"] += c["amount"]
+
+    pdf = FPDF()
+    pdf.set_margins(15, 15, 15)
+    pdf.add_page()
+    # Header
+    pdf.set_fill_color(22, 101, 52)
+    pdf.rect(0, 0, 210, 42, "F")
+    pdf.set_text_color(255, 255, 255)
+    pdf.set_y(10)
+    pdf.set_font("Helvetica", "B", 18)
+    pdf.cell(0, 9, "TWENTY20 CHARITY GROUP", ln=True, align="C")
+    pdf.set_font("Helvetica", "B", 11)
+    pdf.cell(0, 7, "WARIYAD", ln=True, align="C")
+    pdf.set_font("Helvetica", "", 9)
+    pdf.cell(0, 6, f"Annual Financial Report - {yr}", ln=True, align="C")
+    pdf.set_y(50)
+    pdf.set_text_color(28, 25, 23)
+    # Summary
+    pdf.set_font("Helvetica", "B", 12)
+    pdf.set_text_color(22, 101, 52)
+    pdf.cell(0, 8, f"ANNUAL SUMMARY - {yr}", ln=True)
+    pdf.set_draw_color(200, 200, 200)
+    pdf.line(15, pdf.get_y(), 195, pdf.get_y())
+    pdf.ln(4)
+    pdf.set_text_color(28, 25, 23)
+    active = sum(1 for m in members if m.get("status") == "active")
+    m_marriage = [b for b in benefits_paid if b.get("benefit_type") == "marriage"]
+    m_house = [b for b in benefits_paid if b.get("benefit_type") == "housewarming"]
+    for label, value in [
+        ("Total Members (All Time)", str(len(members))),
+        ("Active Members", str(active)),
+        (f"Contributions Collected ({yr})", f"Rs. {total_contrib:,.0f}"),
+        ("Total Credits (Cashbook)", f"Rs. {total_credits:,.0f}"),
+        ("Total Debits (Cashbook)", f"Rs. {total_debits:,.0f}"),
+        ("Closing Fund Balance", f"Rs. {balance:,.0f}"),
+        ("Marriage Benefits Paid", f"{len(m_marriage)} (Rs. {sum(b.get('amount',0) for b in m_marriage):,.0f})"),
+        ("Housewarming Benefits Paid", f"{len(m_house)} (Rs. {sum(b.get('amount',0) for b in m_house):,.0f})"),
+        ("Medical Aid Cases Paid", str(len(medical_paid))),
+    ]:
+        pdf.set_font("Helvetica", "B", 10)
+        pdf.cell(110, 7, label, ln=False)
+        pdf.set_font("Helvetica", "", 10)
+        pdf.cell(0, 7, value, ln=True)
+    # Monthly table
+    pdf.ln(5)
+    pdf.set_font("Helvetica", "B", 11)
+    pdf.set_text_color(22, 101, 52)
+    pdf.cell(0, 8, "MONTHLY CONTRIBUTION BREAKDOWN", ln=True)
+    pdf.line(15, pdf.get_y(), 195, pdf.get_y())
+    pdf.ln(3)
+    pdf.set_fill_color(22, 101, 52)
+    pdf.set_text_color(255, 255, 255)
+    pdf.set_font("Helvetica", "B", 9)
+    pdf.cell(60, 7, "Month", border=1, fill=True, align="C")
+    pdf.cell(50, 7, "Members Paid", border=1, fill=True, align="C")
+    pdf.cell(70, 7, "Amount Collected (Rs)", border=1, fill=True, align="C")
+    pdf.ln()
+    pdf.set_text_color(28, 25, 23)
+    pdf.set_font("Helvetica", "", 9)
+    t_count = 0
+    for m_idx in range(1, 13):
+        md = monthly.get(m_idx, {"count": 0, "amount": 0})
+        fill = m_idx % 2 == 0
+        if fill:
+            pdf.set_fill_color(248, 248, 248)
+        else:
+            pdf.set_fill_color(255, 255, 255)
+        pdf.cell(60, 6, _MONTH_NAMES_FULL[m_idx], border=1, fill=fill)
+        pdf.cell(50, 6, str(md["count"]), border=1, fill=fill, align="C")
+        pdf.cell(70, 6, f"{md['amount']:,.0f}", border=1, fill=fill, align="R")
+        pdf.ln()
+        t_count += md["count"]
+    pdf.set_fill_color(22, 101, 52)
+    pdf.set_text_color(255, 255, 255)
+    pdf.set_font("Helvetica", "B", 9)
+    pdf.cell(60, 7, "TOTAL", border=1, fill=True)
+    pdf.cell(50, 7, str(t_count), border=1, fill=True, align="C")
+    pdf.cell(70, 7, f"{total_contrib:,.0f}", border=1, fill=True, align="R")
+    pdf.ln()
+    # Footer
+    pdf.ln(10)
+    pdf.set_text_color(120, 113, 108)
+    pdf.set_font("Helvetica", "I", 8)
+    pdf.set_draw_color(231, 229, 228)
+    pdf.line(15, pdf.get_y(), 195, pdf.get_y())
+    pdf.ln(4)
+    pdf.cell(0, 5, f"Generated on {datetime.now().strftime('%d %B %Y')} - Twenty20 Charity Group Wariyad", ln=True, align="C")
+    pdf.cell(0, 5, "This is a computer-generated report. For official audit purposes.", ln=True, align="C")
+    pdf_bytes = bytes(pdf.output())
+    return StreamingResponse(io.BytesIO(pdf_bytes),
+        media_type="application/pdf",
+        headers={"Content-Disposition": f"attachment; filename=Twenty20_Wariyad_Report_{yr}.pdf"})
+
+
+# ── NOTIFICATIONS ──────────────────────────────────────────────────────────────
+@api_router.get("/notifications/defaulters")
+async def get_defaulters(
+    month: int, year: int,
+    user: dict = Depends(require_roles("super_admin", "president", "secretary", "treasurer"))
+):
+    members = await db.members.find({"status": "active"}).to_list(500)
+    contributions = await db.contributions.find({"year": year, "month": month}).to_list(500)
+    paid_ids = {c["member_id"] for c in contributions}
+    defaulters = [
+        {
+            "member_id": str(m["_id"]),
+            "member_code": m.get("member_id", ""),
+            "name": m["name"],
+            "mobile": m.get("mobile", ""),
+            "address": m.get("address", ""),
+        }
+        for m in members if str(m["_id"]) not in paid_ids
+    ]
+    return {
+        "month": month, "year": year,
+        "total_active": len(members),
+        "total_paid": len(paid_ids),
+        "total_defaulters": len(defaulters),
+        "defaulters": defaulters,
+        "twilio_enabled": TWILIO_ENABLED,
+    }
+
+
+@api_router.post("/notifications/send-reminders")
+async def send_reminders(
+    data: NotificationSendReq,
+    user: dict = Depends(require_roles("super_admin", "president", "secretary", "treasurer"))
+):
+    members = await db.members.find({"status": "active"}).to_list(500)
+    contributions = await db.contributions.find({"year": data.year, "month": data.month}).to_list(500)
+    paid_ids = {c["member_id"] for c in contributions}
+    defaulters = [m for m in members if str(m["_id"]) not in paid_ids]
+    if not defaulters:
+        return {"sent": 0, "message": "No defaulters found for this month.", "mode": "none", "results": []}
+    month_name = _MONTH_NAMES_FULL[data.month] if 1 <= data.month <= 12 else str(data.month)
+    msg = (data.message or
+           f"Dear Member, your monthly contribution of Rs.100 for {month_name} {data.year} "
+           f"is pending. Please pay at the earliest. - Twenty20 Charity Group Wariyad")
+    results = []
+    sms_sent = 0
+    wa_sent = 0
+    if TWILIO_ENABLED:
+        tc = TwilioClient(_TWILIO_SID, _TWILIO_TOKEN)
+        for m in defaulters:
+            phone = m.get("mobile", "")
+            if not phone:
+                results.append({"member": m["name"], "status": "skipped", "reason": "no phone"})
+                continue
+            ph = phone.strip().replace(" ", "").replace("-", "")
+            if not ph.startswith("+"):
+                ph = "+91" + ph
+            sms_ok = wa_ok = False
+            try:
+                tc.messages.create(body=msg, from_=_TWILIO_FROM, to=ph)
+                sms_ok = True; sms_sent += 1
+            except Exception as e:
+                logger.error(f"SMS failed for {m['name']}: {e}")
+            if _TWILIO_WA_FROM:
+                try:
+                    tc.messages.create(body=msg, from_=f"whatsapp:{_TWILIO_WA_FROM}", to=f"whatsapp:{ph}")
+                    wa_ok = True; wa_sent += 1
+                except Exception as e:
+                    logger.error(f"WhatsApp failed for {m['name']}: {e}")
+            results.append({"member": m["name"], "phone": ph,
+                            "sms": "sent" if sms_ok else "failed",
+                            "whatsapp": "sent" if wa_ok else "failed"})
+    else:
+        for m in defaulters:
+            logger.info(f"[MOCK SMS] To: {m.get('mobile','N/A')} | {msg[:80]}")
+            results.append({"member": m["name"], "phone": m.get("mobile", "N/A"), "sms": "mock", "whatsapp": "mock"})
+    await db.notification_logs.insert_one({
+        "type": "monthly_reminder", "month": data.month, "year": data.year,
+        "sent_by": user["id"], "mode": "live" if TWILIO_ENABLED else "mock",
+        "sent_count": len(defaulters), "sms_sent": sms_sent, "wa_sent": wa_sent,
+        "results": results[:50], "created_at": datetime.now(timezone.utc).isoformat()
+    })
+    return {
+        "sent": len(defaulters), "sms_sent": sms_sent, "wa_sent": wa_sent,
+        "mode": "live" if TWILIO_ENABLED else "mock",
+        "message": (
+            f"Reminders sent to {len(defaulters)} defaulters via SMS and WhatsApp."
+            if TWILIO_ENABLED else
+            f"[MOCK] Twilio not configured. Would notify {len(defaulters)} defaulters. "
+            f"Add TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_FROM_PHONE to backend/.env to enable real sending."
+        ),
+        "results": results,
+    }
+
+
+# ── AUDIT MODULE ───────────────────────────────────────────────────────────────
+@api_router.get("/audit/report")
+async def get_audit_report(
+    year: Optional[int] = None,
+    user: dict = Depends(require_roles("super_admin", "president", "secretary", "treasurer", "auditor"))
+):
+    yr = year or datetime.now().year
+    contributions = await db.contributions.find({"year": yr}).to_list(5000)
+    benefits_paid = await db.benefits.find({"status": "paid"}).to_list(500)
+    medical_paid = await db.medical_aid.find({"status": "paid"}).to_list(500)
+    death_delivered = await db.death_assistance.find({"status": "delivered"}).to_list(500)
+    cashbook = await db.cashbook.find({}).to_list(10000)
+    members = await db.members.find({}).to_list(1000)
+    total_contrib = sum(c["amount"] for c in contributions)
+    total_credits = sum(e["amount"] for e in cashbook if e["entry_type"] == "credit")
+    total_debits = sum(e["amount"] for e in cashbook if e["entry_type"] == "debit")
+    monthly = {}
+    for c in contributions:
+        m = c["month"]
+        if m not in monthly:
+            monthly[m] = {"month": m, "count": 0, "amount": 0}
+        monthly[m]["count"] += 1
+        monthly[m]["amount"] += c["amount"]
+    m_marriage = [b for b in benefits_paid if b.get("benefit_type") == "marriage"]
+    m_house = [b for b in benefits_paid if b.get("benefit_type") == "housewarming"]
+    return {
+        "year": yr,
+        "total_members": len(members),
+        "active_members": sum(1 for m in members if m.get("status") == "active"),
+        "total_contributions": total_contrib,
+        "contribution_count": len(contributions),
+        "monthly_breakdown": sorted(monthly.values(), key=lambda x: x["month"]),
+        "marriage_count": len(m_marriage),
+        "marriage_total": sum(b.get("amount", 0) for b in m_marriage),
+        "housewarming_count": len(m_house),
+        "housewarming_total": sum(b.get("amount", 0) for b in m_house),
+        "medical_aid_count": len(medical_paid),
+        "medical_aid_total": sum(d.get("recommended_amount") or d.get("estimated_expense", 0) for d in medical_paid),
+        "death_cases": len(death_delivered),
+        "total_credits": total_credits,
+        "total_debits": total_debits,
+        "closing_balance": round(total_credits - total_debits, 2),
+    }
+
+
+@api_router.post("/audit/sign-off")
+async def create_audit_sign_off(
+    data: AuditSignOffCreate,
+    user: dict = Depends(require_roles("auditor"))
+):
+    existing = await db.audit_sign_offs.find_one({"year": data.year, "auditor_id": user["id"]})
+    if existing:
+        raise HTTPException(400, f"You have already signed off on year {data.year}. Only one sign-off per auditor per year is allowed.")
+    doc = {
+        "year": data.year, "remarks": data.remarks,
+        "auditor_id": user["id"], "auditor_name": user["name"],
+        "auditor_email": user["email"],
+        "signed_at": datetime.now(timezone.utc).isoformat(),
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    result = await db.audit_sign_offs.insert_one(doc)
+    doc["id"] = str(result.inserted_id)
+    doc.pop("_id", None)
+    return doc
+
+
+@api_router.get("/audit/sign-offs")
+async def list_audit_sign_offs(
+    user: dict = Depends(require_roles("super_admin", "president", "secretary", "treasurer", "auditor"))
+):
+    docs = await db.audit_sign_offs.find().sort("signed_at", -1).to_list(200)
+    return ss(docs)
+
 
 # ── DEMO DATA SEEDING ─────────────────────────────────────────────────────────
 @api_router.post("/demo/seed")
