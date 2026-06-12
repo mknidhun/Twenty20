@@ -228,7 +228,6 @@ export default function Members() {
   const [loading, setLoading] = useState(true);
   const [dialog, setDialog] = useState(null); // null | "add" | "import" | member obj
   const [statusFilter, setStatusFilter] = useState("all");
-  const [seeding, setSeeding] = useState(false);
 
   const canWrite = CANWRITE.includes(user?.role);
   const canDelete = user?.role === "super_admin";
@@ -259,20 +258,6 @@ export default function Members() {
     }
   };
 
-  const handleSeedDemo = async () => {
-    if (!window.confirm("This will load 15 demo members with contribution history. Continue?")) return;
-    setSeeding(true);
-    try {
-      const res = await api.post("/demo/seed");
-      alert(res.data.message);
-      load();
-    } catch (err) {
-      alert(formatError(err));
-    } finally {
-      setSeeding(false);
-    }
-  };
-
   const filtered = members.filter(m => {
     const matchSearch = m.name.toLowerCase().includes(search.toLowerCase()) ||
       m.member_id?.toLowerCase().includes(search.toLowerCase()) ||
@@ -290,13 +275,6 @@ export default function Members() {
         </div>
         {canWrite && (
           <div className="flex items-center gap-2 flex-wrap">
-            {user?.role === "super_admin" && (
-              <button onClick={handleSeedDemo} disabled={seeding} data-testid="seed-demo-button"
-                className="flex items-center gap-2 border border-input bg-card text-foreground px-3 py-2 rounded-md text-sm font-medium hover:bg-muted/60 transition-colors disabled:opacity-60">
-                {seeding ? <Spinner size={14} className="animate-spin" /> : null}
-                Load Demo Data
-              </button>
-            )}
             <button onClick={() => setDialog("import")} data-testid="import-members-button"
               className="flex items-center gap-2 border border-primary text-primary px-4 py-2 rounded-md text-sm font-medium hover:bg-primary/10 transition-colors">
               <UploadSimple size={16} weight="bold" /> Import CSV/Excel
