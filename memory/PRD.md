@@ -141,7 +141,24 @@ Build a complete Charity & Membership Management Platform that digitizes member 
 - CSR Sponsorship Tracking
 - Member self-service portal (online contributions)
 
-### Phase 3 — Real Data Migration (2026-06-11)
+### Phase 4 — Security Hardening (2026-06-11)
+- ✅ Privilege escalation fixed: POST /register always creates `member` role
+- ✅ Secretary cannot mint privileged accounts (super_admin/president/auditor restricted to super_admin)
+- ✅ Plaintext credentials no longer written to disk; ADMIN_PASSWORD has no default fallback
+- ✅ Cookies now use `secure=COOKIE_SECURE` (true by default; override for local dev)
+- ✅ JWT secret length enforced ≥ 32 chars at startup
+- ✅ Disabled accounts (`is_active=false`) blocked at login AND on every request
+- ✅ IDOR fixed: members can only download their own QR card and receipt
+- ✅ Aadhaar masked (`XXXX-XXXX-1234`) for all roles except super_admin
+- ✅ Rate limiter: 5 attempts / 15 min per email before lockout (in-memory)
+- ✅ Excel/CSV formula injection protection (`'` prefix on dangerous cells)
+- ✅ Invalid ObjectIds return clean HTTP 400 (not 500 stack trace)
+- ✅ Email format validated (EmailStr) + password minimum 8 chars
+- ✅ Super admin cannot delete their own account
+- ✅ CORS restricted to explicit method/header allowlist + multi-origin support
+- Security test: 19/19 PASS (`/app/backend/tests/test_security_fixes.py`)
+
+
 - ✅ Cleared all demo data (23 members, 58 contributions, 60 cashbook entries, 6 benefits/medical/death)
 - ✅ Imported 57 real members (TW-001 to TW-057) with Malayalam names and mobile numbers
 - ✅ Imported 51 contribution records (May 2026: 24 paid, June 2026: 27 paid)
