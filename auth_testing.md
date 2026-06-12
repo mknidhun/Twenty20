@@ -11,10 +11,12 @@ Verify: bcrypt hash starts with `$2b$`
 
 ## API Testing
 ```bash
-# Login
+# Login — read password from .env (do not hard-code here)
+ADMIN_PASS=$(grep ^ADMIN_PASSWORD /app/backend/.env | cut -d'"' -f2)
+
 curl -c cookies.txt -X POST http://localhost:8001/api/auth/login \
   -H "Content-Type: application/json" \
-  -d '{"email":"admin@twenty20wariyad.com","password":"Admin@20W20"}'
+  -d "{\"email\":\"admin@twenty20wariyad.com\",\"password\":\"$ADMIN_PASS\"}"
 
 # Check session
 curl -b cookies.txt http://localhost:8001/api/auth/me
@@ -25,5 +27,5 @@ cat cookies.txt
 
 ## Admin Credentials
 - Email: admin@twenty20wariyad.com
-- Password: Admin@20W20
+- Password: see `ADMIN_PASSWORD` in `backend/.env` (never commit plaintext here)
 - Role: super_admin

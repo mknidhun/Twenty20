@@ -11,11 +11,14 @@ def session():
     s.headers.update({"Content-Type": "application/json"})
     return s
 
+ADMIN_EMAIL = "admin@twenty20wariyad.com"
+ADMIN_PASS = os.environ.get("ADMIN_PASSWORD", "")
+
 @pytest.fixture(scope="session")
 def auth_session(session):
     resp = session.post(f"{BASE_URL}/api/auth/login", json={
-        "email": "admin@twenty20wariyad.com",
-        "password": "Admin@20W20"
+        "email": ADMIN_EMAIL,
+        "password": ADMIN_PASS
     })
     assert resp.status_code == 200, f"Login failed: {resp.text}"
     return session
@@ -26,7 +29,7 @@ class TestAuth:
 
     def test_login_success(self, session):
         resp = session.post(f"{BASE_URL}/api/auth/login", json={
-            "email": "admin@twenty20wariyad.com", "password": "Admin@20W20"
+            "email": ADMIN_EMAIL, "password": ADMIN_PASS
         })
         assert resp.status_code == 200
         data = resp.json()

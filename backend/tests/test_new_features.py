@@ -6,13 +6,15 @@ import io
 
 BASE_URL = os.environ.get("REACT_APP_BACKEND_URL", "").rstrip("/")
 
+ADMIN_PASS = os.environ.get("ADMIN_PASSWORD", "")
+
 @pytest.fixture(scope="module")
 def auth_session():
     s = requests.Session()
     s.headers.update({"Content-Type": "application/json"})
     resp = s.post(f"{BASE_URL}/api/auth/login", json={
         "email": "admin@twenty20wariyad.com",
-        "password": "Admin@20W20"
+        "password": ADMIN_PASS
     })
     assert resp.status_code == 200, f"Login failed: {resp.text}"
     s.headers.pop("Content-Type", None)
