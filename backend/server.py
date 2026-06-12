@@ -297,6 +297,21 @@ class NotificationSendReq(BaseModel):
 app = FastAPI(title="Twenty20 Wariyad API")
 api_router = APIRouter(prefix="/api")
 
+LOGO_WHITE = str(Path(__file__).parent / "assets" / "logo_white.png")
+FONT_DIR = Path(__file__).parent / "assets" / "fonts"
+
+
+def new_pdf(*args, **kwargs) -> FPDF:
+    """FPDF instance with Unicode fonts registered (Latin primary + Malayalam fallback)."""
+    pdf = FPDF(*args, **kwargs)
+    pdf.add_font("noto", "", str(FONT_DIR / "NotoSans-Regular.ttf"))
+    pdf.add_font("noto", "B", str(FONT_DIR / "NotoSans-Bold.ttf"))
+    pdf.add_font("noto", "I", str(FONT_DIR / "NotoSans-Italic.ttf"))
+    pdf.add_font("notoml", "", str(FONT_DIR / "NotoSansMalayalam-Regular.ttf"))
+    pdf.add_font("notoml", "B", str(FONT_DIR / "NotoSansMalayalam-Bold.ttf"))
+    pdf.set_fallback_fonts(["notoml"], exact_match=False)
+    return pdf
+
 # Support comma-separated origins (e.g. staging + prod)
 _origins_raw = os.environ.get("FRONTEND_URL", "http://localhost:3000")
 FRONTEND_ORIGINS = [o.strip() for o in _origins_raw.split(",") if o.strip()]
@@ -448,33 +463,34 @@ def build_member_qr_card(member: dict) -> bytes:
     qr_img.save(qr_buf, format="PNG")
     qr_buf.seek(0)
 
-    pdf = FPDF(orientation="L", format=(54, 86))  # Landscape credit-card size (mm)
+    pdf = new_pdf(orientation="L", format=(54, 86))  # Landscape credit-card size (mm)
     pdf.set_margins(0, 0, 0)
     pdf.add_page()
 
     # Green header band
     pdf.set_fill_color(22, 101, 52)
     pdf.rect(0, 0, 86, 14, "F")
+    pdf.image(LOGO_WHITE, x=2, y=2, h=10)
     pdf.set_text_color(255, 255, 255)
-    pdf.set_font("Helvetica", "B", 7)
+    pdf.set_font("noto", "B", 7)
     pdf.set_y(2)
     pdf.cell(0, 5, "TWENTY20 CHARITY GROUP  WARIYAD", align="C", ln=True)
-    pdf.set_font("Helvetica", "", 6)
+    pdf.set_font("noto", "", 6)
     pdf.cell(0, 4, "Verified Member Card", align="C", ln=True)
 
     # Left side — member details
     pdf.set_text_color(28, 25, 23)
     pdf.set_y(17)
     pdf.set_x(3)
-    pdf.set_font("Helvetica", "B", 11)
+    pdf.set_font("noto", "B", 11)
     pdf.cell(48, 7, member.get("name", ""), ln=True)
     pdf.set_x(3)
-    pdf.set_font("Helvetica", "B", 8)
+    pdf.set_font("noto", "B", 8)
     pdf.set_text_color(22, 101, 52)
     pdf.cell(48, 5, member.get("member_id", ""), ln=True)
     pdf.set_x(3)
     pdf.set_text_color(80, 80, 80)
-    pdf.set_font("Helvetica", "", 7)
+    pdf.set_font("noto", "", 7)
     pdf.cell(48, 4, f"Mobile: {member.get('mobile', '-')}", ln=True)
     pdf.set_x(3)
     pdf.cell(48, 4, f"Joined: {member.get('joining_date', '-')}", ln=True)
@@ -485,7 +501,7 @@ def build_member_qr_card(member: dict) -> bytes:
     pdf.set_fill_color(220, 252, 231)
     pdf.set_draw_color(22, 101, 52)
     pdf.set_text_color(22, 101, 52)
-    pdf.set_font("Helvetica", "B", 6)
+    pdf.set_font("noto", "B", 6)
     pdf.cell(20, 5, "  ACTIVE", border=1, fill=True, align="C")
 
     # QR code on right
@@ -495,7 +511,7 @@ def build_member_qr_card(member: dict) -> bytes:
     pdf.set_fill_color(22, 101, 52)
     pdf.rect(0, 49, 86, 5, "F")
     pdf.set_text_color(255, 255, 255)
-    pdf.set_font("Helvetica", "", 5)
+    pdf.set_font("noto", "", 5)
     pdf.set_y(50)
     pdf.cell(0, 3, "This card is the property of Twenty20 Charity Group Wariyad", align="C")
 
@@ -512,6 +528,7 @@ async def download_member_qr_card(mid: str, user: dict = Depends(get_current_use
         raise HTTPException(403, "Access denied")
     pdf_bytes = build_member_qr_card(member)
     name_slug = member.get("name", "member").replace(" ", "_")
+    name_slug = name_slug.encode("ascii", "ignore").decode() or member.get("member_id", "member")
     return StreamingResponse(
         io.BytesIO(pdf_bytes),
         media_type="application/pdf",
@@ -830,20 +847,21 @@ def build_minutes_pdf(meeting: dict) -> bytes:
         "annual_general": "Annual General Body Meeting",
         "emergency": "Emergency Meeting",
     }
-    pdf = FPDF()
+    pdf = new_pdf()
     pdf.set_margins(15, 15, 15)
     pdf.add_page()
 
     # Header
     pdf.set_fill_color(22, 101, 52)
     pdf.rect(0, 0, 210, 42, "F")
+    pdf.image(LOGO_WHITE, x=12, y=7, h=28)
     pdf.set_text_color(255, 255, 255)
     pdf.set_y(10)
-    pdf.set_font("Helvetica", "B", 16)
+    pdf.set_font("noto", "B", 16)
     pdf.cell(0, 9, "TWENTY20 CHARITY GROUP", ln=True, align="C")
-    pdf.set_font("Helvetica", "B", 10)
+    pdf.set_font("noto", "B", 10)
     pdf.cell(0, 6, "WARIYAD", ln=True, align="C")
-    pdf.set_font("Helvetica", "", 8)
+    pdf.set_font("noto", "", 8)
     pdf.cell(0, 5, "Meeting Minutes", ln=True, align="C")
 
     pdf.set_y(50)
@@ -851,7 +869,7 @@ def build_minutes_pdf(meeting: dict) -> bytes:
 
     # Meeting details
     meeting_type = TYPE_LABELS_PDF.get(meeting.get("meeting_type", ""), meeting.get("meeting_type", ""))
-    pdf.set_font("Helvetica", "B", 13)
+    pdf.set_font("noto", "B", 13)
     pdf.set_text_color(22, 101, 52)
     title = meeting.get("title", "")
     pdf.multi_cell(0, 8, title, align="C")
@@ -867,59 +885,59 @@ def build_minutes_pdf(meeting: dict) -> bytes:
         ("Date", meeting.get("scheduled_date", "")),
         ("Status", meeting.get("status", "").title()),
     ]:
-        pdf.set_font("Helvetica", "B", 10)
+        pdf.set_font("noto", "B", 10)
         pdf.cell(50, 6, label + ":", ln=False)
-        pdf.set_font("Helvetica", "", 10)
+        pdf.set_font("noto", "", 10)
         pdf.cell(0, 6, val, ln=True)
 
     # Attendees
     attendees = meeting.get("attendees", [])
     if attendees:
         pdf.ln(3)
-        pdf.set_font("Helvetica", "B", 10)
+        pdf.set_font("noto", "B", 10)
         pdf.cell(0, 6, f"Attendees ({len(attendees)}):", ln=True)
-        pdf.set_font("Helvetica", "", 10)
+        pdf.set_font("noto", "", 10)
         pdf.multi_cell(0, 6, ", ".join(attendees))
 
     # Agenda
     pdf.ln(3)
-    pdf.set_font("Helvetica", "B", 11)
+    pdf.set_font("noto", "B", 11)
     pdf.set_text_color(22, 101, 52)
     pdf.cell(0, 7, "AGENDA", ln=True)
     pdf.set_draw_color(200, 200, 200)
     pdf.line(15, pdf.get_y(), 195, pdf.get_y())
     pdf.ln(3)
     pdf.set_text_color(28, 25, 23)
-    pdf.set_font("Helvetica", "", 10)
+    pdf.set_font("noto", "", 10)
     pdf.multi_cell(0, 6, meeting.get("agenda", ""))
 
     # Minutes
     if meeting.get("minutes"):
         pdf.ln(4)
-        pdf.set_font("Helvetica", "B", 11)
+        pdf.set_font("noto", "B", 11)
         pdf.set_text_color(22, 101, 52)
         pdf.cell(0, 7, "MINUTES OF MEETING", ln=True)
         pdf.line(15, pdf.get_y(), 195, pdf.get_y())
         pdf.ln(3)
         pdf.set_text_color(28, 25, 23)
-        pdf.set_font("Helvetica", "", 10)
+        pdf.set_font("noto", "", 10)
         pdf.multi_cell(0, 6, meeting.get("minutes", ""))
 
     # Structured Resolutions
     resolutions_list = meeting.get("resolutions_list", [])
     if resolutions_list:
         pdf.ln(4)
-        pdf.set_font("Helvetica", "B", 11)
+        pdf.set_font("noto", "B", 11)
         pdf.set_text_color(22, 101, 52)
         pdf.cell(0, 7, "RESOLUTIONS", ln=True)
         pdf.line(15, pdf.get_y(), 195, pdf.get_y())
         pdf.ln(3)
         for i, res in enumerate(resolutions_list, 1):
             status = res.get("status", "passed").upper()
-            pdf.set_font("Helvetica", "B", 10)
+            pdf.set_font("noto", "B", 10)
             pdf.set_text_color(28, 25, 23)
             pdf.cell(8, 6, f"{i}.", ln=False)
-            pdf.set_font("Helvetica", "", 10)
+            pdf.set_font("noto", "", 10)
             # Color-code status
             if status == "PASSED":
                 pdf.set_text_color(22, 101, 52)
@@ -929,24 +947,24 @@ def build_minutes_pdf(meeting: dict) -> bytes:
                 pdf.set_text_color(120, 88, 0)
             pdf.cell(25, 6, f"[{status}]", ln=False)
             pdf.set_text_color(28, 25, 23)
-            pdf.set_font("Helvetica", "", 10)
+            pdf.set_font("noto", "", 10)
             pdf.multi_cell(0, 6, res.get("text", ""))
     elif meeting.get("resolutions"):
         # Fallback to legacy text resolutions
         pdf.ln(4)
-        pdf.set_font("Helvetica", "B", 11)
+        pdf.set_font("noto", "B", 11)
         pdf.set_text_color(22, 101, 52)
         pdf.cell(0, 7, "RESOLUTIONS", ln=True)
         pdf.line(15, pdf.get_y(), 195, pdf.get_y())
         pdf.ln(3)
         pdf.set_text_color(28, 25, 23)
-        pdf.set_font("Helvetica", "", 10)
+        pdf.set_font("noto", "", 10)
         pdf.multi_cell(0, 6, meeting.get("resolutions", ""))
 
     # Footer
     pdf.ln(10)
     pdf.set_text_color(120, 113, 108)
-    pdf.set_font("Helvetica", "I", 8)
+    pdf.set_font("noto", "I", 8)
     pdf.set_draw_color(231, 229, 228)
     pdf.line(15, pdf.get_y(), 195, pdf.get_y())
     pdf.ln(4)
@@ -961,6 +979,7 @@ async def download_minutes_pdf(mid: str, user: dict = Depends(get_current_user))
         raise HTTPException(404, "Meeting not found")
     pdf_bytes = build_minutes_pdf(meeting)
     title_slug = meeting.get("title", "minutes").replace(" ", "_")[:30]
+    title_slug = title_slug.encode("ascii", "ignore").decode() or "minutes"
     return StreamingResponse(
         io.BytesIO(pdf_bytes),
         media_type="application/pdf",
@@ -1130,20 +1149,21 @@ MONTHS_NAMES = ["","January","February","March","April","May","June",
                 "July","August","September","October","November","December"]
 
 def build_receipt_pdf(contrib: dict, member: dict | None) -> bytes:
-    pdf = FPDF()
+    pdf = new_pdf()
     pdf.set_margins(15, 15, 15)
     pdf.add_page()
 
     # Header bar
     pdf.set_fill_color(22, 101, 52)
     pdf.rect(0, 0, 210, 42, "F")
+    pdf.image(LOGO_WHITE, x=12, y=7, h=28)
     pdf.set_text_color(255, 255, 255)
     pdf.set_y(10)
-    pdf.set_font("Helvetica", "B", 18)
+    pdf.set_font("noto", "B", 18)
     pdf.cell(0, 9, "TWENTY20 CHARITY GROUP", ln=True, align="C")
-    pdf.set_font("Helvetica", "B", 11)
+    pdf.set_font("noto", "B", 11)
     pdf.cell(0, 7, "WARIYAD", ln=True, align="C")
-    pdf.set_font("Helvetica", "", 9)
+    pdf.set_font("noto", "", 9)
     pdf.cell(0, 6, "Monthly Contribution Receipt", ln=True, align="C")
 
     pdf.set_y(50)
@@ -1151,9 +1171,9 @@ def build_receipt_pdf(contrib: dict, member: dict | None) -> bytes:
 
     # Receipt meta
     def row(label: str, value: str, bold_val: bool = False):
-        pdf.set_font("Helvetica", "B", 10)
+        pdf.set_font("noto", "B", 10)
         pdf.cell(60, 8, label, ln=False)
-        pdf.set_font("Helvetica", "B" if bold_val else "", 10)
+        pdf.set_font("noto", "B" if bold_val else "", 10)
         pdf.cell(0, 8, value, ln=True)
 
     row("Receipt No:", contrib.get("receipt_number", "N/A"))
@@ -1172,7 +1192,7 @@ def build_receipt_pdf(contrib: dict, member: dict | None) -> bytes:
     pdf.ln(5)
 
     # Member info
-    pdf.set_font("Helvetica", "B", 10)
+    pdf.set_font("noto", "B", 10)
     pdf.set_text_color(22, 101, 52)
     pdf.cell(0, 7, "MEMBER DETAILS", ln=True)
     pdf.set_text_color(28, 25, 23)
@@ -1185,7 +1205,7 @@ def build_receipt_pdf(contrib: dict, member: dict | None) -> bytes:
     pdf.ln(5)
 
     # Contribution info
-    pdf.set_font("Helvetica", "B", 10)
+    pdf.set_font("noto", "B", 10)
     pdf.set_text_color(22, 101, 52)
     pdf.cell(0, 7, "CONTRIBUTION DETAILS", ln=True)
     pdf.set_text_color(28, 25, 23)
@@ -1200,7 +1220,7 @@ def build_receipt_pdf(contrib: dict, member: dict | None) -> bytes:
     pdf.set_fill_color(240, 253, 244)
     pdf.set_draw_color(22, 101, 52)
     pdf.rect(15, pdf.get_y(), 180, 18, "FD")
-    pdf.set_font("Helvetica", "B", 14)
+    pdf.set_font("noto", "B", 14)
     pdf.set_text_color(22, 101, 52)
     amount = contrib.get("amount", 0)
     pdf.set_y(pdf.get_y() + 3)
@@ -1209,7 +1229,7 @@ def build_receipt_pdf(contrib: dict, member: dict | None) -> bytes:
     # Footer
     pdf.ln(15)
     pdf.set_text_color(120, 113, 108)
-    pdf.set_font("Helvetica", "I", 8)
+    pdf.set_font("noto", "I", 8)
     pdf.set_draw_color(231, 229, 228)
     pdf.line(15, pdf.get_y(), 195, pdf.get_y())
     pdf.ln(4)
@@ -1349,24 +1369,25 @@ async def export_pdf_report(
         monthly[m]["count"] += 1
         monthly[m]["amount"] += c["amount"]
 
-    pdf = FPDF()
+    pdf = new_pdf()
     pdf.set_margins(15, 15, 15)
     pdf.add_page()
     # Header
     pdf.set_fill_color(22, 101, 52)
     pdf.rect(0, 0, 210, 42, "F")
+    pdf.image(LOGO_WHITE, x=12, y=7, h=28)
     pdf.set_text_color(255, 255, 255)
     pdf.set_y(10)
-    pdf.set_font("Helvetica", "B", 18)
+    pdf.set_font("noto", "B", 18)
     pdf.cell(0, 9, "TWENTY20 CHARITY GROUP", ln=True, align="C")
-    pdf.set_font("Helvetica", "B", 11)
+    pdf.set_font("noto", "B", 11)
     pdf.cell(0, 7, "WARIYAD", ln=True, align="C")
-    pdf.set_font("Helvetica", "", 9)
+    pdf.set_font("noto", "", 9)
     pdf.cell(0, 6, f"Annual Financial Report - {yr}", ln=True, align="C")
     pdf.set_y(50)
     pdf.set_text_color(28, 25, 23)
     # Summary
-    pdf.set_font("Helvetica", "B", 12)
+    pdf.set_font("noto", "B", 12)
     pdf.set_text_color(22, 101, 52)
     pdf.cell(0, 8, f"ANNUAL SUMMARY - {yr}", ln=True)
     pdf.set_draw_color(200, 200, 200)
@@ -1387,26 +1408,26 @@ async def export_pdf_report(
         ("Housewarming Benefits Paid", f"{len(m_house)} (Rs. {sum(b.get('amount',0) for b in m_house):,.0f})"),
         ("Medical Aid Cases Paid", str(len(medical_paid))),
     ]:
-        pdf.set_font("Helvetica", "B", 10)
+        pdf.set_font("noto", "B", 10)
         pdf.cell(110, 7, label, ln=False)
-        pdf.set_font("Helvetica", "", 10)
+        pdf.set_font("noto", "", 10)
         pdf.cell(0, 7, value, ln=True)
     # Monthly table
     pdf.ln(5)
-    pdf.set_font("Helvetica", "B", 11)
+    pdf.set_font("noto", "B", 11)
     pdf.set_text_color(22, 101, 52)
     pdf.cell(0, 8, "MONTHLY CONTRIBUTION BREAKDOWN", ln=True)
     pdf.line(15, pdf.get_y(), 195, pdf.get_y())
     pdf.ln(3)
     pdf.set_fill_color(22, 101, 52)
     pdf.set_text_color(255, 255, 255)
-    pdf.set_font("Helvetica", "B", 9)
+    pdf.set_font("noto", "B", 9)
     pdf.cell(60, 7, "Month", border=1, fill=True, align="C")
     pdf.cell(50, 7, "Members Paid", border=1, fill=True, align="C")
     pdf.cell(70, 7, "Amount Collected (Rs)", border=1, fill=True, align="C")
     pdf.ln()
     pdf.set_text_color(28, 25, 23)
-    pdf.set_font("Helvetica", "", 9)
+    pdf.set_font("noto", "", 9)
     t_count = 0
     for m_idx in range(1, 13):
         md = monthly.get(m_idx, {"count": 0, "amount": 0})
@@ -1422,7 +1443,7 @@ async def export_pdf_report(
         t_count += md["count"]
     pdf.set_fill_color(22, 101, 52)
     pdf.set_text_color(255, 255, 255)
-    pdf.set_font("Helvetica", "B", 9)
+    pdf.set_font("noto", "B", 9)
     pdf.cell(60, 7, "TOTAL", border=1, fill=True)
     pdf.cell(50, 7, str(t_count), border=1, fill=True, align="C")
     pdf.cell(70, 7, f"{total_contrib:,.0f}", border=1, fill=True, align="R")
@@ -1430,7 +1451,7 @@ async def export_pdf_report(
     # Footer
     pdf.ln(10)
     pdf.set_text_color(120, 113, 108)
-    pdf.set_font("Helvetica", "I", 8)
+    pdf.set_font("noto", "I", 8)
     pdf.set_draw_color(231, 229, 228)
     pdf.line(15, pdf.get_y(), 195, pdf.get_y())
     pdf.ln(4)

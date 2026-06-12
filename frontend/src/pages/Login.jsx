@@ -3,7 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { useAuth } from "@/contexts/AuthContext";
 import { formatError } from "@/utils/api";
 import { AUTH } from "@/constants/testIds";
-import { ShieldStar, Eye, EyeSlash } from "@phosphor-icons/react";
+import { Eye, EyeSlash } from "@phosphor-icons/react";
 
 export default function Login() {
   const { login } = useAuth();
@@ -41,13 +41,7 @@ export default function Login() {
         <div className="absolute inset-0 bg-black/60" />
         <div className="relative z-10">
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 bg-white/15 backdrop-blur-md rounded-lg flex items-center justify-center border border-white/20">
-              <ShieldStar size={24} weight="fill" color="white" />
-            </div>
-            <div>
-              <div className="text-white font-bold text-xl font-heading tracking-tight">Twenty20</div>
-              <div className="text-white/70 text-xs uppercase tracking-[0.2em]">Charity Group Wariyad</div>
-            </div>
+            <img src="/logo-full-light.png" alt="Twenty20 Charity Group Wariyad" className="h-28 w-auto object-contain drop-shadow-lg" data-testid="login-hero-logo" />
           </div>
         </div>
         <div className="relative z-10 animate-fade-in">
@@ -65,13 +59,18 @@ export default function Login() {
         <div className="w-full max-w-sm animate-fade-in">
           {/* Mobile brand */}
           <div className="flex items-center gap-3 mb-8 lg:hidden">
-            <div className="w-9 h-9 bg-primary rounded-lg flex items-center justify-center">
-              <ShieldStar size={20} weight="fill" className="text-primary-foreground" />
+            <div className="w-11 h-11 bg-white rounded-lg border border-border flex items-center justify-center flex-shrink-0">
+              <img src="/logo-icon.png" alt="Twenty20 Wariyad logo" className="w-9 h-9 object-contain" />
             </div>
             <div>
               <div className="text-foreground font-bold text-lg font-heading">Twenty20 Wariyad</div>
               <div className="text-muted-foreground text-xs uppercase tracking-[0.18em]">Charity Group</div>
             </div>
+          </div>
+
+          {/* Desktop logo above form */}
+          <div className="hidden lg:flex justify-center mb-6">
+            <img src="/logo-icon.png" alt="Twenty20 Wariyad logo" className="h-20 w-auto object-contain dark:bg-white dark:rounded-xl dark:p-2" />
           </div>
 
           <h2 className="text-3xl font-medium text-foreground mb-1 font-heading tracking-tight">Welcome back</h2>

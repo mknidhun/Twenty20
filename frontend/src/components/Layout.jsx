@@ -5,7 +5,7 @@ import { useTheme } from "next-themes";
 import {
   HouseLine, Users, CurrencyInr, HandHeart, FirstAid,
   Skull, Notebook, UsersThree, CalendarBlank, ChartBar,
-  SignOut, List, UserGear, ShieldStar, Bell, Scales, Sun, Moon
+  SignOut, List, UserGear, Bell, Scales, Sun, Moon
 } from "@phosphor-icons/react";
 import { LAYOUT, AUTH } from "@/constants/testIds";
 
@@ -50,8 +50,8 @@ export default function Layout() {
       {/* Brand */}
       <div className="p-5 border-b border-border">
         <div className="flex items-center gap-2.5">
-          <div className="w-9 h-9 bg-primary rounded-lg flex items-center justify-center shadow-sm">
-            <ShieldStar size={20} weight="fill" className="text-primary-foreground" />
+          <div className="w-10 h-10 bg-white rounded-lg flex items-center justify-center border border-border shadow-sm flex-shrink-0">
+            <img src="/logo-icon.png" alt="Twenty20 Wariyad logo" className="w-8 h-8 object-contain" data-testid="sidebar-logo" />
           </div>
           <div>
             <div className="text-sm font-bold text-foreground leading-tight font-heading tracking-tight">Twenty20</div>
@@ -132,8 +132,8 @@ export default function Layout() {
             <List size={20} />
           </button>
           <div className="flex items-center gap-2 md:hidden">
-            <div className="w-6 h-6 bg-primary rounded flex items-center justify-center">
-              <ShieldStar size={14} weight="fill" className="text-primary-foreground" />
+            <div className="w-7 h-7 bg-white rounded-md border border-border flex items-center justify-center">
+              <img src="/logo-icon.png" alt="Twenty20 Wariyad logo" className="w-5.5 h-5.5 object-contain" style={{ width: 22, height: 22 }} />
             </div>
             <span className="text-sm font-bold text-foreground font-heading">Twenty20 Wariyad</span>
           </div>
