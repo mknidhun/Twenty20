@@ -1,5 +1,6 @@
 import "@/App.css";
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
+import { ThemeProvider } from "next-themes";
 import { AuthProvider, useAuth } from "@/contexts/AuthContext";
 import Layout from "@/components/Layout";
 import Login from "@/pages/Login";
@@ -20,9 +21,9 @@ import Audit from "@/pages/Audit";
 function ProtectedRoute({ children }) {
   const { user } = useAuth();
   if (user === null) return (
-    <div className="min-h-screen flex items-center justify-center bg-stone-50">
-      <div className="flex items-center gap-3 text-stone-600">
-        <div className="w-5 h-5 border-2 border-green-800 border-t-transparent rounded-full animate-spin" />
+    <div className="min-h-screen flex items-center justify-center bg-background">
+      <div className="flex items-center gap-3 text-muted-foreground">
+        <div className="w-5 h-5 border-2 border-primary border-t-transparent rounded-full animate-spin" />
         <span className="font-medium">Loading...</span>
       </div>
     </div>
@@ -58,11 +59,13 @@ function AppRoutes() {
 
 function App() {
   return (
-    <AuthProvider>
-      <BrowserRouter>
-        <AppRoutes />
-      </BrowserRouter>
-    </AuthProvider>
+    <ThemeProvider attribute="class" defaultTheme="light" enableSystem={false} disableTransitionOnChange>
+      <AuthProvider>
+        <BrowserRouter>
+          <AppRoutes />
+        </BrowserRouter>
+      </AuthProvider>
+    </ThemeProvider>
   );
 }
 

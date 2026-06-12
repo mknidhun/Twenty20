@@ -10,13 +10,13 @@ const ROLE_LABELS = {
   auditor: "Auditor", member: "Member"
 };
 const ROLE_BADGE = {
-  super_admin: "bg-purple-50 text-purple-800 border-purple-200",
-  president: "bg-green-50 text-green-800 border-green-200",
-  secretary: "bg-blue-50 text-blue-800 border-blue-200",
-  treasurer: "bg-amber-50 text-amber-800 border-amber-200",
-  committee_member: "bg-stone-100 text-stone-700 border-stone-200",
-  auditor: "bg-sky-50 text-sky-700 border-sky-200",
-  member: "bg-stone-50 text-stone-600 border-stone-200",
+  super_admin: "bg-violet-500/10 text-violet-600 dark:text-violet-400 border-violet-500/30",
+  president: "bg-primary/10 text-primary border-primary/25",
+  secretary: "bg-sky-500/100/10 text-sky-600 dark:text-sky-400 border-sky-500/30",
+  treasurer: "bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/30",
+  committee_member: "bg-muted text-foreground border-border",
+  auditor: "bg-sky-500/10 text-sky-600 dark:text-sky-400 border-sky-500/30",
+  member: "bg-muted/50 text-muted-foreground border-border",
 };
 
 function UserDialog({ initial, members, onSave, onClose }) {
@@ -44,44 +44,44 @@ function UserDialog({ initial, members, onSave, onClose }) {
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-stone-900/40 p-4">
-      <div className="bg-white rounded-lg shadow-lg w-full max-w-md">
-        <div className="flex items-center justify-between px-5 py-4 border-b border-stone-200">
-          <h3 className="font-semibold text-stone-900 font-heading">{initial?.id ? "Edit User" : "Add User"}</h3>
-          <button onClick={onClose} className="text-stone-400 hover:text-stone-600"><X size={18} /></button>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+      <div className="bg-card rounded-lg shadow-lg w-full max-w-md">
+        <div className="flex items-center justify-between px-5 py-4 border-b border-border">
+          <h3 className="font-semibold text-foreground font-heading">{initial?.id ? "Edit User" : "Add User"}</h3>
+          <button onClick={onClose} className="text-muted-foreground/70 hover:text-foreground"><X size={18} /></button>
         </div>
         <form onSubmit={handleSubmit} className="p-5 space-y-4">
           <div>
-            <label className="block text-sm font-medium text-stone-700 mb-1">Full Name *</label>
+            <label className="block text-sm font-medium text-foreground mb-1">Full Name *</label>
             <input required value={form.name} onChange={e => setForm(p => ({...p, name: e.target.value}))}
-              className="w-full border border-stone-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-700/30 focus:border-green-700" />
+              className="w-full border border-input rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring/30 focus:border-primary" />
           </div>
           {!initial?.id && (
             <div>
-              <label className="block text-sm font-medium text-stone-700 mb-1">Email *</label>
+              <label className="block text-sm font-medium text-foreground mb-1">Email *</label>
               <input type="email" required value={form.email} onChange={e => setForm(p => ({...p, email: e.target.value}))}
-                className="w-full border border-stone-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-700/30 focus:border-green-700" />
+                className="w-full border border-input rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring/30 focus:border-primary" />
             </div>
           )}
           {!initial?.id && (
             <div>
-              <label className="block text-sm font-medium text-stone-700 mb-1">Password *</label>
+              <label className="block text-sm font-medium text-foreground mb-1">Password *</label>
               <input type="password" required value={form.password} onChange={e => setForm(p => ({...p, password: e.target.value}))}
-                className="w-full border border-stone-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-700/30 focus:border-green-700" />
+                className="w-full border border-input rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring/30 focus:border-primary" />
             </div>
           )}
           <div>
-            <label className="block text-sm font-medium text-stone-700 mb-1">Role *</label>
+            <label className="block text-sm font-medium text-foreground mb-1">Role *</label>
             <select required value={form.role} onChange={e => setForm(p => ({...p, role: e.target.value}))}
-              className="w-full border border-stone-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-700/30 focus:border-green-700">
+              className="w-full border border-input rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring/30 focus:border-primary">
               {ROLES.map(r => <option key={r} value={r}>{ROLE_LABELS[r]}</option>)}
             </select>
           </div>
           {form.role === "member" && !initial?.id && (
             <div>
-              <label className="block text-sm font-medium text-stone-700 mb-1">Link to Member (optional)</label>
+              <label className="block text-sm font-medium text-foreground mb-1">Link to Member (optional)</label>
               <select value={form.member_id} onChange={e => setForm(p => ({...p, member_id: e.target.value}))}
-                className="w-full border border-stone-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-700/30 focus:border-green-700">
+                className="w-full border border-input rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring/30 focus:border-primary">
                 <option value="">— Not linked —</option>
                 {members.filter(m => m.status === "active").map(m => (
                   <option key={m.id} value={m.id}>{m.member_id} — {m.name}</option>
@@ -89,11 +89,11 @@ function UserDialog({ initial, members, onSave, onClose }) {
               </select>
             </div>
           )}
-          {error && <p className="text-red-600 text-sm bg-red-50 border border-red-200 rounded px-3 py-2">{error}</p>}
+          {error && <p className="text-destructive text-sm bg-destructive/10 border border-destructive/30 rounded px-3 py-2">{error}</p>}
           <div className="flex gap-3">
-            <button type="button" onClick={onClose} className="flex-1 px-4 py-2 border border-stone-300 text-stone-700 rounded-md text-sm hover:bg-stone-50">Cancel</button>
+            <button type="button" onClick={onClose} className="flex-1 px-4 py-2 border border-input text-foreground rounded-md text-sm hover:bg-muted/60">Cancel</button>
             <button type="submit" disabled={loading}
-              className="flex-1 px-4 py-2 bg-green-800 text-white rounded-md text-sm font-medium hover:bg-green-900 disabled:opacity-60">
+              className="flex-1 px-4 py-2 bg-primary text-primary-foreground rounded-md text-sm font-medium hover:bg-primary/90 disabled:opacity-60">
               {loading ? "Saving..." : "Save User"}
             </button>
           </div>
@@ -123,9 +123,9 @@ export default function Users() {
   if (!canAccess) {
     return (
       <div className="p-6">
-        <div className="bg-red-50 border border-red-200 rounded-lg p-6 text-center">
-          <p className="text-red-700 font-medium">Access Restricted</p>
-          <p className="text-red-600 text-sm mt-1">You don't have permission to manage users.</p>
+        <div className="bg-destructive/10 border border-destructive/30 rounded-lg p-6 text-center">
+          <p className="text-destructive font-medium">Access Restricted</p>
+          <p className="text-destructive text-sm mt-1">You don't have permission to manage users.</p>
         </div>
       </div>
     );
@@ -141,18 +141,18 @@ export default function Users() {
     <div className="p-6 space-y-5">
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
-          <h1 className="text-2xl font-bold text-stone-900 font-heading">User Management</h1>
-          <p className="text-stone-500 text-sm">Manage system access and roles</p>
+          <h1 className="text-2xl font-bold text-foreground font-heading">User Management</h1>
+          <p className="text-muted-foreground text-sm">Manage system access and roles</p>
         </div>
         <button onClick={() => setDialog("new")} data-testid="add-user-button"
-          className="flex items-center gap-2 bg-green-800 text-white px-4 py-2 rounded-md text-sm font-medium hover:bg-green-900 transition-colors">
+          className="flex items-center gap-2 bg-primary text-primary-foreground px-4 py-2 rounded-md text-sm font-medium hover:bg-primary/90 transition-colors">
           <Plus size={16} weight="bold" /> Add User
         </button>
       </div>
 
-      <div className="bg-white border border-stone-200 rounded-lg overflow-hidden" data-testid="users-table">
-        {loading ? <div className="p-8 text-center text-stone-400">Loading...</div> :
-          users.length === 0 ? <div className="p-8 text-center text-stone-400">No users found</div> : (
+      <div className="bg-card border border-border rounded-lg overflow-hidden" data-testid="users-table">
+        {loading ? <div className="p-8 text-center text-muted-foreground/70">Loading...</div> :
+          users.length === 0 ? <div className="p-8 text-center text-muted-foreground/70">No users found</div> : (
             <div className="overflow-x-auto">
               <table className="w-full data-table">
                 <thead>
@@ -169,14 +169,14 @@ export default function Users() {
                 <tbody>
                   {users.map(u => (
                     <tr key={u.id}>
-                      <td className="font-medium text-stone-900">{u.name}</td>
-                      <td className="text-stone-600">{u.email}</td>
+                      <td className="font-medium text-foreground">{u.name}</td>
+                      <td className="text-muted-foreground">{u.email}</td>
                       <td>
-                        <span className={`inline-flex px-2 py-0.5 text-xs font-medium rounded border ${ROLE_BADGE[u.role] || "bg-stone-100 text-stone-600 border-stone-200"}`}>
+                        <span className={`inline-flex px-2 py-0.5 text-xs font-medium rounded border ${ROLE_BADGE[u.role] || "bg-muted text-muted-foreground border-border"}`}>
                           {ROLE_LABELS[u.role] || u.role}
                         </span>
                       </td>
-                      <td className="text-stone-500 text-xs">{u.member_id ? <span className="font-mono bg-stone-100 px-1.5 py-0.5 rounded">{u.member_id}</span> : "-"}</td>
+                      <td className="text-muted-foreground text-xs">{u.member_id ? <span className="font-mono bg-muted px-1.5 py-0.5 rounded">{u.member_id}</span> : "-"}</td>
                       <td>
                         <span className={`inline-flex px-2 py-0.5 text-xs font-medium rounded border ${u.is_active ? "badge-active" : "badge-inactive"}`}>
                           {u.is_active ? "Active" : "Inactive"}
@@ -187,12 +187,12 @@ export default function Users() {
                         <td className="text-right">
                           <div className="flex items-center justify-end gap-2">
                             <button onClick={() => setDialog(u)}
-                              className="p-1.5 text-stone-400 hover:text-green-700 hover:bg-green-50 rounded transition-colors">
+                              className="p-1.5 text-muted-foreground/70 hover:text-primary hover:bg-primary/10 rounded transition-colors">
                               <PencilSimple size={15} />
                             </button>
                             {u.id !== user.id && (
                               <button onClick={() => handleDelete(u.id)}
-                                className="p-1.5 text-stone-400 hover:text-red-600 hover:bg-red-50 rounded transition-colors">
+                                className="p-1.5 text-muted-foreground/70 hover:text-destructive hover:bg-destructive/10 rounded transition-colors">
                                 <Trash size={15} />
                               </button>
                             )}

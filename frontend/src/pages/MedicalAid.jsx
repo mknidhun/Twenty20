@@ -35,55 +35,55 @@ function ApplyDialog({ onSave, onClose }) {
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-stone-900/40 p-4">
-      <div className="bg-white rounded-lg shadow-lg w-full max-w-lg max-h-[90vh] overflow-y-auto">
-        <div className="flex items-center justify-between px-5 py-4 border-b border-stone-200 sticky top-0 bg-white">
-          <h3 className="font-semibold text-stone-900 font-heading">Apply for Medical Aid</h3>
-          <button onClick={onClose} className="text-stone-400 hover:text-stone-600"><X size={18} /></button>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+      <div className="bg-card rounded-lg shadow-lg w-full max-w-lg max-h-[90vh] overflow-y-auto">
+        <div className="flex items-center justify-between px-5 py-4 border-b border-border sticky top-0 bg-card">
+          <h3 className="font-semibold text-foreground font-heading">Apply for Medical Aid</h3>
+          <button onClick={onClose} className="text-muted-foreground/70 hover:text-foreground"><X size={18} /></button>
         </div>
         <form onSubmit={handleSubmit} className="p-5 space-y-4">
           <div className="grid grid-cols-2 gap-4">
             <div className="col-span-2">
-              <label className="block text-sm font-medium text-stone-700 mb-1">Applicant Name *</label>
+              <label className="block text-sm font-medium text-foreground mb-1">Applicant Name *</label>
               <input required value={form.applicant_name} onChange={e => setForm(p => ({...p, applicant_name: e.target.value}))}
-                className="w-full border border-stone-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-700/30 focus:border-green-700" />
+                className="w-full border border-input rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring/30 focus:border-primary" />
             </div>
             <div>
-              <label className="block text-sm font-medium text-stone-700 mb-1">Contact *</label>
+              <label className="block text-sm font-medium text-foreground mb-1">Contact *</label>
               <input required value={form.contact} onChange={e => setForm(p => ({...p, contact: e.target.value}))}
-                className="w-full border border-stone-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-700/30 focus:border-green-700" />
+                className="w-full border border-input rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring/30 focus:border-primary" />
             </div>
             <div>
-              <label className="block text-sm font-medium text-stone-700 mb-1">Estimated Expense (₹) *</label>
+              <label className="block text-sm font-medium text-foreground mb-1">Estimated Expense (₹) *</label>
               <input type="number" required value={form.estimated_expense} onChange={e => setForm(p => ({...p, estimated_expense: e.target.value}))}
-                className="w-full border border-stone-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-700/30 focus:border-green-700" />
+                className="w-full border border-input rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring/30 focus:border-primary" />
             </div>
             <div className="col-span-2">
-              <label className="block text-sm font-medium text-stone-700 mb-1">Address *</label>
+              <label className="block text-sm font-medium text-foreground mb-1">Address *</label>
               <textarea required value={form.address} onChange={e => setForm(p => ({...p, address: e.target.value}))} rows={2}
-                className="w-full border border-stone-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-700/30 focus:border-green-700" />
+                className="w-full border border-input rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring/30 focus:border-primary" />
             </div>
             <div>
-              <label className="block text-sm font-medium text-stone-700 mb-1">Medical Condition *</label>
+              <label className="block text-sm font-medium text-foreground mb-1">Medical Condition *</label>
               <input required value={form.medical_condition} onChange={e => setForm(p => ({...p, medical_condition: e.target.value}))}
-                className="w-full border border-stone-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-700/30 focus:border-green-700" />
+                className="w-full border border-input rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring/30 focus:border-primary" />
             </div>
             <div>
-              <label className="block text-sm font-medium text-stone-700 mb-1">Hospital *</label>
+              <label className="block text-sm font-medium text-foreground mb-1">Hospital *</label>
               <input required value={form.hospital} onChange={e => setForm(p => ({...p, hospital: e.target.value}))}
-                className="w-full border border-stone-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-700/30 focus:border-green-700" />
+                className="w-full border border-input rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring/30 focus:border-primary" />
             </div>
             <div className="col-span-2">
-              <label className="block text-sm font-medium text-stone-700 mb-1">Additional Notes</label>
+              <label className="block text-sm font-medium text-foreground mb-1">Additional Notes</label>
               <textarea value={form.notes} onChange={e => setForm(p => ({...p, notes: e.target.value}))} rows={2}
-                className="w-full border border-stone-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-700/30 focus:border-green-700" />
+                className="w-full border border-input rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring/30 focus:border-primary" />
             </div>
           </div>
-          {error && <p className="text-red-600 text-sm bg-red-50 border border-red-200 rounded px-3 py-2">{error}</p>}
+          {error && <p className="text-destructive text-sm bg-destructive/10 border border-destructive/30 rounded px-3 py-2">{error}</p>}
           <div className="flex gap-3">
-            <button type="button" onClick={onClose} className="flex-1 px-4 py-2 border border-stone-300 text-stone-700 rounded-md text-sm hover:bg-stone-50">Cancel</button>
+            <button type="button" onClick={onClose} className="flex-1 px-4 py-2 border border-input text-foreground rounded-md text-sm hover:bg-muted/60">Cancel</button>
             <button type="submit" disabled={loading}
-              className="flex-1 px-4 py-2 bg-green-800 text-white rounded-md text-sm font-medium hover:bg-green-900 disabled:opacity-60">
+              className="flex-1 px-4 py-2 bg-primary text-primary-foreground rounded-md text-sm font-medium hover:bg-primary/90 disabled:opacity-60">
               {loading ? "Submitting..." : "Submit Application"}
             </button>
           </div>
@@ -124,34 +124,34 @@ function UpdateDialog({ aid, onSave, onClose, userRole }) {
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-stone-900/40 p-4">
-      <div className="bg-white rounded-lg shadow-lg w-full max-w-sm">
-        <div className="flex items-center justify-between px-5 py-4 border-b border-stone-200">
-          <h3 className="font-semibold text-stone-900 font-heading">Update Application</h3>
-          <button onClick={onClose} className="text-stone-400 hover:text-stone-600"><X size={18} /></button>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+      <div className="bg-card rounded-lg shadow-lg w-full max-w-sm">
+        <div className="flex items-center justify-between px-5 py-4 border-b border-border">
+          <h3 className="font-semibold text-foreground font-heading">Update Application</h3>
+          <button onClick={onClose} className="text-muted-foreground/70 hover:text-foreground"><X size={18} /></button>
         </div>
         <form onSubmit={handleSubmit} className="p-5 space-y-4">
           <div>
-            <label className="block text-sm font-medium text-stone-700 mb-1">Status</label>
+            <label className="block text-sm font-medium text-foreground mb-1">Status</label>
             <select value={form.status} onChange={e => setForm(p => ({...p, status: e.target.value}))}
-              className="w-full border border-stone-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-700/30">
+              className="w-full border border-input rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring/30">
               {opts.map(o => <option key={o} value={o}>{STATUS_LABELS[o]}</option>)}
             </select>
           </div>
           <div>
-            <label className="block text-sm font-medium text-stone-700 mb-1">Recommended Amount (₹)</label>
+            <label className="block text-sm font-medium text-foreground mb-1">Recommended Amount (₹)</label>
             <input type="number" value={form.recommended_amount} onChange={e => setForm(p => ({...p, recommended_amount: e.target.value}))}
-              className="w-full border border-stone-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-700/30" />
+              className="w-full border border-input rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring/30" />
           </div>
           <div>
-            <label className="block text-sm font-medium text-stone-700 mb-1">Notes</label>
+            <label className="block text-sm font-medium text-foreground mb-1">Notes</label>
             <textarea value={form.notes} onChange={e => setForm(p => ({...p, notes: e.target.value}))} rows={2}
-              className="w-full border border-stone-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-700/30" />
+              className="w-full border border-input rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring/30" />
           </div>
           <div className="flex gap-3">
-            <button type="button" onClick={onClose} className="flex-1 px-4 py-2 border border-stone-300 text-stone-700 rounded-md text-sm hover:bg-stone-50">Cancel</button>
+            <button type="button" onClick={onClose} className="flex-1 px-4 py-2 border border-input text-foreground rounded-md text-sm hover:bg-muted/60">Cancel</button>
             <button type="submit" disabled={loading}
-              className="flex-1 px-4 py-2 bg-green-800 text-white rounded-md text-sm font-medium hover:bg-green-900 disabled:opacity-60">
+              className="flex-1 px-4 py-2 bg-primary text-primary-foreground rounded-md text-sm font-medium hover:bg-primary/90 disabled:opacity-60">
               {loading ? "Updating..." : "Update"}
             </button>
           </div>
@@ -174,11 +174,11 @@ export default function MedicalAid() {
     <div className="p-6 space-y-5">
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
-          <h1 className="text-2xl font-bold text-stone-900 font-heading">Medical Aid</h1>
-          <p className="text-stone-500 text-sm">Track medical assistance requests</p>
+          <h1 className="text-2xl font-bold text-foreground font-heading">Medical Aid</h1>
+          <p className="text-muted-foreground text-sm">Track medical assistance requests</p>
         </div>
         <button onClick={() => setDialog("add")} data-testid={MEDICAL.addButton}
-          className="flex items-center gap-2 bg-green-800 text-white px-4 py-2 rounded-md text-sm font-medium hover:bg-green-900 transition-colors">
+          className="flex items-center gap-2 bg-primary text-primary-foreground px-4 py-2 rounded-md text-sm font-medium hover:bg-primary/90 transition-colors">
           <Plus size={16} weight="bold" /> Apply for Medical Aid
         </button>
       </div>
@@ -186,15 +186,15 @@ export default function MedicalAid() {
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         {["pending","under_review","approved","paid"].map(st => (
           <div key={st} className="stat-card">
-            <p className="text-xs font-semibold uppercase tracking-wide text-stone-500 mb-1">{STATUS_LABELS[st]}</p>
-            <p className="text-2xl font-bold text-stone-900 font-heading">{aids.filter(a => a.status === st).length}</p>
+            <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-1">{STATUS_LABELS[st]}</p>
+            <p className="text-2xl font-bold text-foreground font-heading">{aids.filter(a => a.status === st).length}</p>
           </div>
         ))}
       </div>
 
-      <div className="bg-white border border-stone-200 rounded-lg overflow-hidden" data-testid={MEDICAL.table}>
-        {loading ? <div className="p-8 text-center text-stone-400">Loading...</div> :
-          aids.length === 0 ? <div className="p-8 text-center text-stone-400">No medical aid applications</div> : (
+      <div className="bg-card border border-border rounded-lg overflow-hidden" data-testid={MEDICAL.table}>
+        {loading ? <div className="p-8 text-center text-muted-foreground/70">Loading...</div> :
+          aids.length === 0 ? <div className="p-8 text-center text-muted-foreground/70">No medical aid applications</div> : (
             <div className="overflow-x-auto">
               <table className="w-full data-table">
                 <thead>
@@ -213,7 +213,7 @@ export default function MedicalAid() {
                 <tbody>
                   {aids.map(a => (
                     <tr key={a.id}>
-                      <td className="font-medium text-stone-900">{a.applicant_name}</td>
+                      <td className="font-medium text-foreground">{a.applicant_name}</td>
                       <td>{a.contact}</td>
                       <td className="max-w-xs truncate">{a.medical_condition}</td>
                       <td>{a.hospital}</td>
@@ -229,7 +229,7 @@ export default function MedicalAid() {
                       <td>
                         {["super_admin","president","secretary","treasurer","committee_member"].includes(user?.role) && a.status !== "paid" && (
                           <button onClick={() => setDialog(a)}
-                            className="px-2.5 py-1 text-xs bg-stone-100 text-stone-700 rounded hover:bg-stone-200">
+                            className="px-2.5 py-1 text-xs bg-muted text-foreground rounded hover:bg-muted">
                             Update
                           </button>
                         )}

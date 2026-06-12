@@ -38,17 +38,17 @@ function ApplyDialog({ members, onSave, onClose }) {
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-stone-900/40 p-4">
-      <div className="bg-white rounded-lg shadow-lg w-full max-w-md">
-        <div className="flex items-center justify-between px-5 py-4 border-b border-stone-200">
-          <h3 className="font-semibold text-stone-900 font-heading">Apply for Benefit</h3>
-          <button onClick={onClose} className="text-stone-400 hover:text-stone-600"><X size={18} /></button>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+      <div className="bg-card rounded-lg shadow-lg w-full max-w-md">
+        <div className="flex items-center justify-between px-5 py-4 border-b border-border">
+          <h3 className="font-semibold text-foreground font-heading">Apply for Benefit</h3>
+          <button onClick={onClose} className="text-muted-foreground/70 hover:text-foreground"><X size={18} /></button>
         </div>
         <form onSubmit={handleSubmit} className="p-5 space-y-4">
           <div>
-            <label className="block text-sm font-medium text-stone-700 mb-1">Member *</label>
+            <label className="block text-sm font-medium text-foreground mb-1">Member *</label>
             <select required value={form.member_id} onChange={e => setForm(p => ({...p, member_id: e.target.value}))}
-              className="w-full border border-stone-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-700/30 focus:border-green-700">
+              className="w-full border border-input rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring/30 focus:border-primary">
               <option value="">Select member...</option>
               {members.filter(m => m.status === "active").map(m => (
                 <option key={m.id} value={m.id}>{m.member_id} — {m.name}</option>
@@ -56,33 +56,33 @@ function ApplyDialog({ members, onSave, onClose }) {
             </select>
           </div>
           <div>
-            <label className="block text-sm font-medium text-stone-700 mb-1">Benefit Type *</label>
+            <label className="block text-sm font-medium text-foreground mb-1">Benefit Type *</label>
             <select required value={form.benefit_type} onChange={e => setForm(p => ({...p, benefit_type: e.target.value}))}
-              className="w-full border border-stone-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-700/30 focus:border-green-700">
+              className="w-full border border-input rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring/30 focus:border-primary">
               <option value="marriage">Marriage Benefit (₹5,000)</option>
               <option value="housewarming">Housewarming Benefit (₹3,000)</option>
             </select>
           </div>
           <div>
-            <label className="block text-sm font-medium text-stone-700 mb-1">Event Date *</label>
+            <label className="block text-sm font-medium text-foreground mb-1">Event Date *</label>
             <input type="date" required value={form.event_date} onChange={e => setForm(p => ({...p, event_date: e.target.value}))}
-              className="w-full border border-stone-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-700/30 focus:border-green-700" />
+              className="w-full border border-input rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring/30 focus:border-primary" />
           </div>
           <div>
-            <label className="block text-sm font-medium text-stone-700 mb-1">Notes</label>
+            <label className="block text-sm font-medium text-foreground mb-1">Notes</label>
             <textarea value={form.notes} onChange={e => setForm(p => ({...p, notes: e.target.value}))} rows={2}
-              className="w-full border border-stone-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-700/30 focus:border-green-700" />
+              className="w-full border border-input rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring/30 focus:border-primary" />
           </div>
-          <div className="bg-amber-50 border border-amber-200 rounded-md p-3">
-            <p className="text-xs text-amber-800">
+          <div className="bg-amber-500/10 border border-amber-500/30 rounded-md p-3">
+            <p className="text-xs text-amber-600 dark:text-amber-400">
               Amount: <strong>₹{BENEFIT_AMOUNTS[form.benefit_type]?.toLocaleString("en-IN")}</strong> — Subject to committee approval
             </p>
           </div>
-          {error && <p className="text-red-600 text-sm bg-red-50 border border-red-200 rounded px-3 py-2">{error}</p>}
+          {error && <p className="text-destructive text-sm bg-destructive/10 border border-destructive/30 rounded px-3 py-2">{error}</p>}
           <div className="flex gap-3">
-            <button type="button" onClick={onClose} className="flex-1 px-4 py-2 border border-stone-300 text-stone-700 rounded-md text-sm hover:bg-stone-50">Cancel</button>
+            <button type="button" onClick={onClose} className="flex-1 px-4 py-2 border border-input text-foreground rounded-md text-sm hover:bg-muted/60">Cancel</button>
             <button type="submit" disabled={loading}
-              className="flex-1 px-4 py-2 bg-green-800 text-white rounded-md text-sm font-medium hover:bg-green-900 disabled:opacity-60">
+              className="flex-1 px-4 py-2 bg-primary text-primary-foreground rounded-md text-sm font-medium hover:bg-primary/90 disabled:opacity-60">
               {loading ? "Applying..." : "Apply"}
             </button>
           </div>
@@ -113,24 +113,24 @@ function WorkflowActions({ benefit, onUpdate, userRole }) {
     <div className="flex gap-2 flex-wrap">
       {status === "pending" && ["super_admin","secretary"].includes(userRole) && (
         <button onClick={() => update("secretary_verified")} disabled={loading}
-          className="px-2.5 py-1 text-xs bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-60">
+          className="px-2.5 py-1 text-xs bg-sky-600 text-white rounded hover:bg-sky-700 disabled:opacity-60">
           Verify
         </button>
       )}
       {status === "secretary_verified" && ["super_admin","president","committee_member"].includes(userRole) && (
         <button onClick={() => update("committee_approved")} disabled={loading}
-          className="px-2.5 py-1 text-xs bg-green-700 text-white rounded hover:bg-green-800 disabled:opacity-60">
+          className="px-2.5 py-1 text-xs bg-primary text-primary-foreground rounded hover:bg-primary/90 disabled:opacity-60">
           Approve
         </button>
       )}
       {status === "committee_approved" && ["super_admin","treasurer"].includes(userRole) && (
         <button onClick={() => update("paid")} disabled={loading} data-testid={BENEFITS.approveButton}
-          className="px-2.5 py-1 text-xs bg-green-800 text-white rounded hover:bg-green-900 disabled:opacity-60">
+          className="px-2.5 py-1 text-xs bg-primary text-primary-foreground rounded hover:bg-primary/90 disabled:opacity-60">
           Mark Paid
         </button>
       )}
       <button onClick={() => update("rejected")} disabled={loading} data-testid={BENEFITS.rejectButton}
-        className="px-2.5 py-1 text-xs bg-red-100 text-red-700 rounded hover:bg-red-200 disabled:opacity-60">
+        className="px-2.5 py-1 text-xs bg-destructive/15 text-destructive rounded hover:bg-destructive/20 disabled:opacity-60">
         Reject
       </button>
     </div>
@@ -163,11 +163,11 @@ export default function Benefits() {
     <div className="p-6 space-y-5">
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
-          <h1 className="text-2xl font-bold text-stone-900 font-heading">Benefits</h1>
-          <p className="text-stone-500 text-sm">Marriage & Housewarming benefits</p>
+          <h1 className="text-2xl font-bold text-foreground font-heading">Benefits</h1>
+          <p className="text-muted-foreground text-sm">Marriage & Housewarming benefits</p>
         </div>
         <button onClick={() => setDialog(true)} data-testid={BENEFITS.addButton}
-          className="flex items-center gap-2 bg-green-800 text-white px-4 py-2 rounded-md text-sm font-medium hover:bg-green-900 transition-colors">
+          className="flex items-center gap-2 bg-primary text-primary-foreground px-4 py-2 rounded-md text-sm font-medium hover:bg-primary/90 transition-colors">
           <Plus size={16} weight="bold" /> Apply Benefit
         </button>
       </div>
@@ -176,8 +176,8 @@ export default function Benefits() {
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         {["pending","secretary_verified","committee_approved","paid"].map(st => (
           <div key={st} className="stat-card">
-            <p className="text-xs font-semibold uppercase tracking-wide text-stone-500 mb-1">{STATUS_LABELS[st]}</p>
-            <p className="text-2xl font-bold text-stone-900 font-heading">
+            <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-1">{STATUS_LABELS[st]}</p>
+            <p className="text-2xl font-bold text-foreground font-heading">
               {benefits.filter(b => b.status === st).length}
             </p>
           </div>
@@ -187,22 +187,22 @@ export default function Benefits() {
       {/* Filters */}
       <div className="flex gap-3">
         <select value={filterType} onChange={e => setFilterType(e.target.value)}
-          className="border border-stone-300 rounded-md px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-green-700/30">
+          className="border border-input rounded-md px-3 py-2 text-sm bg-card focus:outline-none focus:ring-2 focus:ring-ring/30">
           <option value="all">All Types</option>
           <option value="marriage">Marriage</option>
           <option value="housewarming">Housewarming</option>
         </select>
         <select value={filterStatus} onChange={e => setFilterStatus(e.target.value)}
-          className="border border-stone-300 rounded-md px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-green-700/30">
+          className="border border-input rounded-md px-3 py-2 text-sm bg-card focus:outline-none focus:ring-2 focus:ring-ring/30">
           <option value="all">All Status</option>
           {Object.entries(STATUS_LABELS).map(([k,v]) => <option key={k} value={k}>{v}</option>)}
         </select>
       </div>
 
       {/* Table */}
-      <div className="bg-white border border-stone-200 rounded-lg overflow-hidden" data-testid={BENEFITS.table}>
-        {loading ? <div className="p-8 text-center text-stone-400">Loading...</div> :
-          filtered.length === 0 ? <div className="p-8 text-center text-stone-400">No benefit applications found</div> : (
+      <div className="bg-card border border-border rounded-lg overflow-hidden" data-testid={BENEFITS.table}>
+        {loading ? <div className="p-8 text-center text-muted-foreground/70">Loading...</div> :
+          filtered.length === 0 ? <div className="p-8 text-center text-muted-foreground/70">No benefit applications found</div> : (
             <div className="overflow-x-auto">
               <table className="w-full data-table">
                 <thead>
@@ -219,7 +219,7 @@ export default function Benefits() {
                 <tbody>
                   {filtered.map(b => (
                     <tr key={b.id}>
-                      <td className="font-medium text-stone-900">{b.member_name}</td>
+                      <td className="font-medium text-foreground">{b.member_name}</td>
                       <td className="capitalize">{b.benefit_type}</td>
                       <td>₹{b.amount?.toLocaleString("en-IN")}</td>
                       <td>{b.event_date ? new Date(b.event_date).toLocaleDateString("en-IN") : "-"}</td>

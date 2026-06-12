@@ -56,7 +56,7 @@ export default function Notifications() {
   const canAccess = ["super_admin", "president", "secretary", "treasurer"].includes(user?.role);
   if (!canAccess) {
     return (
-      <div className="p-8 text-center text-stone-500">
+      <div className="p-8 text-center text-muted-foreground">
         You do not have permission to access this page.
       </div>
     );
@@ -66,28 +66,28 @@ export default function Notifications() {
     <div className="p-6 space-y-6 max-w-4xl mx-auto">
       {/* Header */}
       <div>
-        <h1 className="text-2xl font-bold text-stone-900 font-heading flex items-center gap-2">
-          <Bell size={24} weight="duotone" className="text-green-700" />
+        <h1 className="text-2xl font-bold text-foreground font-heading flex items-center gap-2">
+          <Bell size={24} weight="duotone" className="text-primary" />
           Notifications
         </h1>
-        <p className="text-stone-500 text-sm mt-0.5">
+        <p className="text-muted-foreground text-sm mt-0.5">
           Send monthly contribution reminders to defaulters via SMS & WhatsApp
         </p>
       </div>
 
       {/* Controls */}
-      <div className="bg-white border border-stone-200 rounded-lg p-5 space-y-4">
-        <h3 className="font-semibold text-stone-900 font-heading text-sm uppercase tracking-wide">
+      <div className="bg-card border border-border rounded-lg p-5 space-y-4">
+        <h3 className="font-semibold text-foreground font-heading text-sm uppercase tracking-wide">
           Check Defaulters
         </h3>
         <div className="flex flex-wrap items-end gap-3">
           <div className="space-y-1">
-            <label className="text-xs font-medium text-stone-500 uppercase tracking-wide">Month</label>
+            <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Month</label>
             <select
               value={month}
               onChange={e => setMonth(+e.target.value)}
               data-testid="notif-month-select"
-              className="border border-stone-300 rounded-md px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-green-700/30"
+              className="border border-input rounded-md px-3 py-2 text-sm bg-card focus:outline-none focus:ring-2 focus:ring-ring/30"
             >
               {MONTHS.slice(1).map((m, i) => (
                 <option key={i + 1} value={i + 1}>{m}</option>
@@ -95,12 +95,12 @@ export default function Notifications() {
             </select>
           </div>
           <div className="space-y-1">
-            <label className="text-xs font-medium text-stone-500 uppercase tracking-wide">Year</label>
+            <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Year</label>
             <select
               value={year}
               onChange={e => setYear(+e.target.value)}
               data-testid="notif-year-select"
-              className="border border-stone-300 rounded-md px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-green-700/30"
+              className="border border-input rounded-md px-3 py-2 text-sm bg-card focus:outline-none focus:ring-2 focus:ring-ring/30"
             >
               {years.map(y => <option key={y} value={y}>{y}</option>)}
             </select>
@@ -109,7 +109,7 @@ export default function Notifications() {
             onClick={fetchDefaulters}
             disabled={loading}
             data-testid="check-defaulters-btn"
-            className="px-4 py-2 bg-green-800 text-white text-sm font-medium rounded-md hover:bg-green-900 disabled:opacity-50 transition-colors flex items-center gap-2"
+            className="px-4 py-2 bg-primary text-primary-foreground text-sm font-medium rounded-md hover:bg-primary/90 disabled:opacity-50 transition-colors flex items-center gap-2"
           >
             <Users size={16} />
             {loading ? "Checking..." : "Check Defaulters"}
@@ -119,28 +119,28 @@ export default function Notifications() {
 
       {/* Defaulters Result */}
       {defaulters && (
-        <div className="bg-white border border-stone-200 rounded-lg p-5 space-y-4" data-testid="defaulters-result">
+        <div className="bg-card border border-border rounded-lg p-5 space-y-4" data-testid="defaulters-result">
           {/* Stats row */}
           <div className="grid grid-cols-3 gap-3">
-            <div className="bg-stone-50 rounded-md p-3 text-center">
-              <p className="text-xs font-semibold uppercase tracking-wide text-stone-500">Active Members</p>
-              <p className="text-2xl font-bold text-stone-900 font-heading">{defaulters.total_active}</p>
+            <div className="bg-muted/50 rounded-md p-3 text-center">
+              <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Active Members</p>
+              <p className="text-2xl font-bold text-foreground font-heading">{defaulters.total_active}</p>
             </div>
-            <div className="bg-green-50 rounded-md p-3 text-center">
-              <p className="text-xs font-semibold uppercase tracking-wide text-green-700">Paid</p>
-              <p className="text-2xl font-bold text-green-800 font-heading">{defaulters.total_paid}</p>
+            <div className="bg-primary/10 rounded-md p-3 text-center">
+              <p className="text-xs font-semibold uppercase tracking-wide text-primary">Paid</p>
+              <p className="text-2xl font-bold text-primary font-heading">{defaulters.total_paid}</p>
             </div>
-            <div className="bg-red-50 rounded-md p-3 text-center">
-              <p className="text-xs font-semibold uppercase tracking-wide text-red-600">Defaulters</p>
-              <p className="text-2xl font-bold text-red-700 font-heading">{defaulters.total_defaulters}</p>
+            <div className="bg-destructive/10 rounded-md p-3 text-center">
+              <p className="text-xs font-semibold uppercase tracking-wide text-destructive">Defaulters</p>
+              <p className="text-2xl font-bold text-destructive font-heading">{defaulters.total_defaulters}</p>
             </div>
           </div>
 
           {/* Twilio mode badge */}
           <div className={`flex items-center gap-2 px-3 py-2 rounded-md text-xs font-medium border ${
             defaulters.twilio_enabled
-              ? "bg-green-50 border-green-200 text-green-800"
-              : "bg-amber-50 border-amber-200 text-amber-800"
+              ? "bg-primary/10 border-primary/25 text-primary"
+              : "bg-amber-500/10 border-amber-500/30 text-amber-600 dark:text-amber-400"
           }`}>
             {defaulters.twilio_enabled ? (
               <><CheckCircle size={14} weight="fill" /> Twilio configured — real SMS & WhatsApp will be sent</>
@@ -153,24 +153,24 @@ export default function Notifications() {
           {defaulters.total_defaulters > 0 ? (
             <>
               <div className="space-y-1">
-                <h4 className="text-sm font-semibold text-stone-700">
+                <h4 className="text-sm font-semibold text-foreground">
                   Defaulters for {MONTHS[defaulters.month]} {defaulters.year}
                 </h4>
                 <div className="overflow-x-auto">
                   <table className="w-full text-sm" data-testid="defaulters-table">
                     <thead>
-                      <tr className="border-b border-stone-200">
-                        <th className="text-left py-2 px-3 text-xs font-semibold uppercase tracking-wide text-stone-500">Member ID</th>
-                        <th className="text-left py-2 px-3 text-xs font-semibold uppercase tracking-wide text-stone-500">Name</th>
-                        <th className="text-left py-2 px-3 text-xs font-semibold uppercase tracking-wide text-stone-500">Mobile</th>
+                      <tr className="border-b border-border">
+                        <th className="text-left py-2 px-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Member ID</th>
+                        <th className="text-left py-2 px-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Name</th>
+                        <th className="text-left py-2 px-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Mobile</th>
                       </tr>
                     </thead>
                     <tbody>
                       {defaulters.defaulters.map((d) => (
-                        <tr key={d.member_id} className="border-b border-stone-100 hover:bg-stone-50">
-                          <td className="py-2 px-3 font-mono text-xs text-stone-500">{d.member_code}</td>
-                          <td className="py-2 px-3 font-medium text-stone-900">{d.name}</td>
-                          <td className="py-2 px-3 text-stone-600 flex items-center gap-1">
+                        <tr key={d.member_id} className="border-b border-border hover:bg-muted/60">
+                          <td className="py-2 px-3 font-mono text-xs text-muted-foreground">{d.member_code}</td>
+                          <td className="py-2 px-3 font-medium text-foreground">{d.name}</td>
+                          <td className="py-2 px-3 text-muted-foreground flex items-center gap-1">
                             <Phone size={12} /> {d.mobile || "—"}
                           </td>
                         </tr>
@@ -182,7 +182,7 @@ export default function Notifications() {
 
               {/* Custom message */}
               <div className="space-y-1.5">
-                <label className="text-xs font-medium text-stone-500 uppercase tracking-wide">
+                <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
                   Custom Message (optional — leave blank for default)
                 </label>
                 <textarea
@@ -191,7 +191,7 @@ export default function Notifications() {
                   data-testid="custom-message-input"
                   rows={3}
                   placeholder="Dear Member, your monthly contribution of Rs.100 for ... is pending."
-                  className="w-full border border-stone-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-700/30 resize-none"
+                  className="w-full border border-input rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring/30 resize-none"
                 />
               </div>
 
@@ -199,16 +199,16 @@ export default function Notifications() {
                 onClick={handleSend}
                 disabled={sendLoading}
                 data-testid="send-reminders-btn"
-                className="px-5 py-2.5 bg-green-800 text-white text-sm font-medium rounded-md hover:bg-green-900 disabled:opacity-50 transition-colors flex items-center gap-2"
+                className="px-5 py-2.5 bg-primary text-primary-foreground text-sm font-medium rounded-md hover:bg-primary/90 disabled:opacity-50 transition-colors flex items-center gap-2"
               >
                 <PaperPlaneTilt size={16} />
                 {sendLoading ? "Sending..." : `Send Reminders to ${defaulters.total_defaulters} Defaulters`}
               </button>
             </>
           ) : (
-            <div className="flex items-center gap-3 bg-green-50 border border-green-200 rounded-md p-4">
-              <CheckCircle size={20} weight="fill" className="text-green-700" />
-              <p className="text-sm text-green-800 font-medium">
+            <div className="flex items-center gap-3 bg-primary/10 border border-primary/25 rounded-md p-4">
+              <CheckCircle size={20} weight="fill" className="text-primary" />
+              <p className="text-sm text-primary font-medium">
                 All active members have paid for {MONTHS[defaulters.month]} {defaulters.year}.
               </p>
             </div>
@@ -218,45 +218,45 @@ export default function Notifications() {
 
       {/* Send Result */}
       {sendResult && (
-        <div className="bg-white border border-stone-200 rounded-lg p-5 space-y-3" data-testid="send-result">
+        <div className="bg-card border border-border rounded-lg p-5 space-y-3" data-testid="send-result">
           <div className={`flex items-start gap-3 p-3 rounded-md border ${
-            sendResult.mode === "live" ? "bg-green-50 border-green-200" : "bg-amber-50 border-amber-200"
+            sendResult.mode === "live" ? "bg-primary/10 border-primary/25" : "bg-amber-500/10 border-amber-500/30"
           }`}>
             {sendResult.mode === "live"
-              ? <CheckCircle size={18} weight="fill" className="text-green-700 mt-0.5 flex-shrink-0" />
-              : <Warning size={18} weight="fill" className="text-amber-600 mt-0.5 flex-shrink-0" />
+              ? <CheckCircle size={18} weight="fill" className="text-primary mt-0.5 flex-shrink-0" />
+              : <Warning size={18} weight="fill" className="text-amber-600 dark:text-amber-400 mt-0.5 flex-shrink-0" />
             }
-            <p className="text-sm font-medium text-stone-800">{sendResult.message}</p>
+            <p className="text-sm font-medium text-foreground">{sendResult.message}</p>
           </div>
 
           {sendResult.results && sendResult.results.length > 0 && (
             <div className="overflow-x-auto">
               <table className="w-full text-xs">
                 <thead>
-                  <tr className="border-b border-stone-200">
-                    <th className="text-left py-1.5 px-2 font-semibold text-stone-500">Member</th>
-                    <th className="text-left py-1.5 px-2 font-semibold text-stone-500">Phone</th>
-                    <th className="text-center py-1.5 px-2 font-semibold text-stone-500">SMS</th>
-                    <th className="text-center py-1.5 px-2 font-semibold text-stone-500">WhatsApp</th>
+                  <tr className="border-b border-border">
+                    <th className="text-left py-1.5 px-2 font-semibold text-muted-foreground">Member</th>
+                    <th className="text-left py-1.5 px-2 font-semibold text-muted-foreground">Phone</th>
+                    <th className="text-center py-1.5 px-2 font-semibold text-muted-foreground">SMS</th>
+                    <th className="text-center py-1.5 px-2 font-semibold text-muted-foreground">WhatsApp</th>
                   </tr>
                 </thead>
                 <tbody>
                   {sendResult.results.map((r, i) => (
-                    <tr key={i} className="border-b border-stone-100">
+                    <tr key={i} className="border-b border-border">
                       <td className="py-1.5 px-2 font-medium">{r.member}</td>
-                      <td className="py-1.5 px-2 text-stone-500">{r.phone}</td>
+                      <td className="py-1.5 px-2 text-muted-foreground">{r.phone}</td>
                       <td className="py-1.5 px-2 text-center">
                         <span className={`px-1.5 py-0.5 rounded text-xs font-medium ${
-                          r.sms === "sent" ? "bg-green-100 text-green-700" :
-                          r.sms === "mock" ? "bg-amber-100 text-amber-700" :
-                          "bg-red-100 text-red-700"
+                          r.sms === "sent" ? "bg-primary/15 text-primary" :
+                          r.sms === "mock" ? "bg-amber-500/100/20 text-amber-600 dark:text-amber-400" :
+                          "bg-destructive/15 text-destructive"
                         }`}>{r.sms}</span>
                       </td>
                       <td className="py-1.5 px-2 text-center">
                         <span className={`px-1.5 py-0.5 rounded text-xs font-medium ${
-                          r.whatsapp === "sent" ? "bg-green-100 text-green-700" :
-                          r.whatsapp === "mock" ? "bg-amber-100 text-amber-700" :
-                          "bg-red-100 text-red-700"
+                          r.whatsapp === "sent" ? "bg-primary/15 text-primary" :
+                          r.whatsapp === "mock" ? "bg-amber-500/100/20 text-amber-600 dark:text-amber-400" :
+                          "bg-destructive/15 text-destructive"
                         }`}>{r.whatsapp}</span>
                       </td>
                     </tr>

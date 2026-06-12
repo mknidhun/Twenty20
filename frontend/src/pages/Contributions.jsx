@@ -29,35 +29,35 @@ function RecordPaymentDialog({ member, month, year, onSave, onClose }) {
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-stone-900/40 p-4">
-      <div className="bg-white rounded-lg shadow-lg w-full max-w-sm" data-testid={CONTRIBUTIONS.addForm}>
-        <div className="flex items-center justify-between px-5 py-4 border-b border-stone-200">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+      <div className="bg-card rounded-lg shadow-lg w-full max-w-sm" data-testid={CONTRIBUTIONS.addForm}>
+        <div className="flex items-center justify-between px-5 py-4 border-b border-border">
           <div>
-            <h3 className="font-semibold text-stone-900 font-heading">Record Payment</h3>
-            <p className="text-xs text-stone-500">{member.member_name} — {MONTHS[month]} {year}</p>
+            <h3 className="font-semibold text-foreground font-heading">Record Payment</h3>
+            <p className="text-xs text-muted-foreground">{member.member_name} — {MONTHS[month]} {year}</p>
           </div>
-          <button onClick={onClose} className="text-stone-400 hover:text-stone-600"><X size={18} /></button>
+          <button onClick={onClose} className="text-muted-foreground/70 hover:text-foreground"><X size={18} /></button>
         </div>
         <form onSubmit={handleSubmit} className="p-5 space-y-4">
           <div>
-            <label className="block text-sm font-medium text-stone-700 mb-1">Amount (₹) *</label>
+            <label className="block text-sm font-medium text-foreground mb-1">Amount (₹) *</label>
             <input type="number" required value={form.amount} onChange={e => setForm(p => ({...p, amount: e.target.value}))}
-              className="w-full border border-stone-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-700/30 focus:border-green-700" />
+              className="w-full border border-input rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring/30 focus:border-primary" />
           </div>
           <div>
-            <label className="block text-sm font-medium text-stone-700 mb-1">Payment Method *</label>
+            <label className="block text-sm font-medium text-foreground mb-1">Payment Method *</label>
             <select value={form.payment_method} onChange={e => setForm(p => ({...p, payment_method: e.target.value}))}
-              className="w-full border border-stone-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-700/30 focus:border-green-700">
+              className="w-full border border-input rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring/30 focus:border-primary">
               <option value="cash">Cash</option>
               <option value="upi">UPI</option>
               <option value="bank_transfer">Bank Transfer</option>
             </select>
           </div>
-          {error && <p className="text-red-600 text-sm bg-red-50 border border-red-200 rounded px-3 py-2">{error}</p>}
+          {error && <p className="text-destructive text-sm bg-destructive/10 border border-destructive/30 rounded px-3 py-2">{error}</p>}
           <div className="flex gap-3">
-            <button type="button" onClick={onClose} className="flex-1 px-4 py-2 border border-stone-300 text-stone-700 rounded-md text-sm hover:bg-stone-50">Cancel</button>
+            <button type="button" onClick={onClose} className="flex-1 px-4 py-2 border border-input text-foreground rounded-md text-sm hover:bg-muted/60">Cancel</button>
             <button type="submit" disabled={loading} data-testid={CONTRIBUTIONS.markPaidButton}
-              className="flex-1 px-4 py-2 bg-green-800 text-white rounded-md text-sm font-medium hover:bg-green-900 disabled:opacity-60">
+              className="flex-1 px-4 py-2 bg-primary text-primary-foreground rounded-md text-sm font-medium hover:bg-primary/90 disabled:opacity-60">
               {loading ? "Recording..." : "Record Payment"}
             </button>
           </div>
@@ -117,52 +117,52 @@ export default function Contributions() {
   return (
     <div className="p-6 space-y-5">
       <div>
-        <h1 className="text-2xl font-bold text-stone-900 font-heading">Contributions</h1>
-        <p className="text-stone-500 text-sm">Monthly contribution tracker</p>
+        <h1 className="text-2xl font-bold text-foreground font-heading">Contributions</h1>
+        <p className="text-muted-foreground text-sm">Monthly contribution tracker</p>
       </div>
 
       {/* Month / Year selector */}
       <div className="flex flex-wrap gap-3 items-center">
         <select value={month} onChange={e => setMonth(+e.target.value)} data-testid={CONTRIBUTIONS.monthSelector}
-          className="border border-stone-300 rounded-md px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-green-700/30">
+          className="border border-input rounded-md px-3 py-2 text-sm bg-card focus:outline-none focus:ring-2 focus:ring-ring/30">
           {MONTHS.slice(1).map((m, i) => <option key={i+1} value={i+1}>{m}</option>)}
         </select>
         <select value={year} onChange={e => setYear(+e.target.value)} data-testid={CONTRIBUTIONS.yearSelector}
-          className="border border-stone-300 rounded-md px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-green-700/30">
+          className="border border-input rounded-md px-3 py-2 text-sm bg-card focus:outline-none focus:ring-2 focus:ring-ring/30">
           {years.map(y => <option key={y} value={y}>{y}</option>)}
         </select>
         <input
           placeholder="Search member..."
           value={search} onChange={e => setSearch(e.target.value)}
-          className="border border-stone-300 rounded-md px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-green-700/30 w-48"
+          className="border border-input rounded-md px-3 py-2 text-sm bg-card focus:outline-none focus:ring-2 focus:ring-ring/30 w-48"
         />
       </div>
 
       {/* Summary cards */}
       <div className="grid grid-cols-3 gap-4">
         <div className="stat-card">
-          <p className="text-xs font-semibold uppercase tracking-wide text-stone-500 mb-1">Paid</p>
-          <p className="text-2xl font-bold text-green-800 font-heading">{paid}</p>
-          <p className="text-xs text-stone-500">{Math.round(paid/(status.length||1)*100)}% of members</p>
+          <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-1">Paid</p>
+          <p className="text-2xl font-bold text-primary font-heading">{paid}</p>
+          <p className="text-xs text-muted-foreground">{Math.round(paid/(status.length||1)*100)}% of members</p>
         </div>
         <div className="stat-card">
-          <p className="text-xs font-semibold uppercase tracking-wide text-stone-500 mb-1">Pending</p>
-          <p className="text-2xl font-bold text-amber-700 font-heading">{pending}</p>
-          <p className="text-xs text-stone-500">Yet to pay</p>
+          <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-1">Pending</p>
+          <p className="text-2xl font-bold text-amber-600 dark:text-amber-400 font-heading">{pending}</p>
+          <p className="text-xs text-muted-foreground">Yet to pay</p>
         </div>
         <div className="stat-card">
-          <p className="text-xs font-semibold uppercase tracking-wide text-stone-500 mb-1">Collected</p>
-          <p className="text-2xl font-bold text-stone-900 font-heading">₹{total.toLocaleString("en-IN")}</p>
-          <p className="text-xs text-stone-500">This month</p>
+          <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-1">Collected</p>
+          <p className="text-2xl font-bold text-foreground font-heading">₹{total.toLocaleString("en-IN")}</p>
+          <p className="text-xs text-muted-foreground">This month</p>
         </div>
       </div>
 
       {/* Status table */}
-      <div className="bg-white border border-stone-200 rounded-lg overflow-hidden" data-testid={CONTRIBUTIONS.statusTable}>
+      <div className="bg-card border border-border rounded-lg overflow-hidden" data-testid={CONTRIBUTIONS.statusTable}>
         {loading ? (
-          <div className="p-8 text-center text-stone-400">Loading...</div>
+          <div className="p-8 text-center text-muted-foreground/70">Loading...</div>
         ) : filtered.length === 0 ? (
-          <div className="p-8 text-center text-stone-400">No members found</div>
+          <div className="p-8 text-center text-muted-foreground/70">No members found</div>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full data-table">
@@ -180,8 +180,8 @@ export default function Contributions() {
               <tbody>
                 {filtered.map(s => (
                   <tr key={s.member_id}>
-                    <td><span className="font-mono text-xs bg-stone-100 px-2 py-0.5 rounded">{s.member_code}</span></td>
-                    <td className="font-medium text-stone-900">{s.member_name}</td>
+                    <td><span className="font-mono text-xs bg-muted px-2 py-0.5 rounded">{s.member_code}</span></td>
+                    <td className="font-medium text-foreground">{s.member_name}</td>
                     <td>
                       <span className={`inline-flex items-center gap-1 px-2 py-0.5 text-xs font-medium rounded border ${s.status === "paid" ? "badge-paid" : "badge-pending"}`}>
                         {s.status === "paid" ? <CheckCircle size={11} /> : <Clock size={11} />}
@@ -192,7 +192,7 @@ export default function Contributions() {
                     <td className="capitalize">{s.payment_method || "-"}</td>
                     <td>
                       {s.receipt_number ? (
-                        <span className="flex items-center gap-1 text-stone-600">
+                        <span className="flex items-center gap-1 text-muted-foreground">
                           <Receipt size={12} />{s.receipt_number}
                         </span>
                       ) : "-"}
@@ -202,19 +202,19 @@ export default function Contributions() {
                         canWrite ? (
                           <button
                             onClick={() => setDialog(s)}
-                            className="flex items-center gap-1.5 ml-auto px-3 py-1.5 bg-green-800 text-white rounded text-xs font-medium hover:bg-green-900 transition-colors"
+                            className="flex items-center gap-1.5 ml-auto px-3 py-1.5 bg-primary text-primary-foreground rounded text-xs font-medium hover:bg-primary/90 transition-colors"
                           >
                             <Plus size={12} weight="bold" /> Record
                           </button>
                         ) : null
                       ) : (
                         <div className="flex items-center justify-end gap-2">
-                          <span className="text-xs text-green-700 font-medium">✓ Paid</span>
+                          <span className="text-xs text-primary font-medium">✓ Paid</span>
                           {s.contribution_id && (
                             <button
                               onClick={() => downloadReceipt(s.contribution_id, s.receipt_number)}
                               data-testid="download-receipt-button"
-                              className="flex items-center gap-1 px-2 py-1 text-xs text-stone-600 border border-stone-300 rounded hover:bg-stone-50 hover:border-stone-400 transition-colors"
+                              className="flex items-center gap-1 px-2 py-1 text-xs text-muted-foreground border border-input rounded hover:bg-muted/60 hover:border-ring transition-colors"
                               title="Download PDF Receipt"
                             >
                               <DownloadSimple size={12} /> PDF

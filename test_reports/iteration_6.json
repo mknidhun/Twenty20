@@ -1,0 +1,60 @@
+{
+  "summary": "Frontend visual-regression testing after the Earthy-Green redesign + dark mode migration. Verified login, theme toggle (light/dark persistence), dashboard charts, all 12 sidebar pages, Members/Contributions dialogs, Reports pie+bar charts, status badges, Malayalam rendering, mobile responsiveness, and logout. No functional regressions detected; all 14 routes render in both modes without console errors. Two minor UX observations reported as feedback for the main agent.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {
+        "screen": "Members > Add New Member dialog",
+        "issues": [
+          "Joining Date field uses browser-native <input type='date'> instead of the shadcn Calendar/Popover component. Picker UI looks inconsistent with the rest of the redesigned theme (especially in dark mode the OS picker renders with default browser chrome).",
+          "Status field uses native <select> instead of the shadcn <Select> component. The dropdown options popup uses OS-native styling that breaks the Organic & Earthy theme consistency."
+        ]
+      },
+      {
+        "screen": "Dashboard / Reports charts",
+        "issues": [
+          "Recharts emits repeated warnings 'The width(-1) and height(-1) of chart should be greater than 0' on initial render. Charts ultimately render fine, but this is caused by ResponsiveContainer measuring before parent flex layout settles. Consider setting an explicit min-height (e.g. min-h-[300px]) on the chart wrappers."
+        ]
+      }
+    ]
+  },
+  "positive_verifications": [
+    "Login: hero image (left) + form (right) layout renders correctly; admin login works and redirects to /dashboard.",
+    "Theme toggle (data-testid='theme-toggle-btn'): toggles 'dark' class on <html>, persists across page navigation AND across full page reload (verified both directions).",
+    "Dashboard: stats cards visible, Monthly Collections bar chart bars render in BOTH light and dark mode (green bars confirmed visually).",
+    "All 12 sidebar pages render without console errors or blank screens in dark mode: /members, /contributions, /benefits, /medical-aid, /death-assistance, /financials, /committee, /meetings, /reports, /notifications, /audit, /users.",
+    "Members table: renders 102+ Malayalam script names (e.g., കിരൺ, കൃഷ്ണ, ഇല്ല്യാസ്) without clipping.",
+    "Add Member dialog: opens, uses bg-card so it adapts to theme, form fields readable.",
+    "Reports page: pie chart (2 sectors) AND bar chart (8 bars) both render visibly in dark mode using hsl(var(--chart-N)) tokens.",
+    "Status badges (badge-paid, badge-pending): readable in both modes — paid uses primary green tint, pending uses amber tint with good contrast.",
+    "Logout: AUTH.logoutButton in sidebar clears session and redirects to /login.",
+    "Mobile (390x844): hamburger (data-testid='mobile-menu-toggle') opens sidebar overlay with all menu items visible (verified visually via screenshot)."
+  ],
+  "test_report_links": [],
+  "action_items": [
+    "[Low/UX polish] Replace native <input type='date'> in Members Add/Edit dialog with shadcn Calendar+Popover.",
+    "[Low/UX polish] Replace native <select> for Status field with shadcn Select component.",
+    "[Low] Add min-height to Recharts ResponsiveContainer wrappers to silence width/height(-1) warnings on initial render."
+  ],
+  "critical_code_review_comments": [
+    "Theme persistence works correctly via next-themes (attribute='class', stored in localStorage).",
+    "All page-level migrations to semantic tokens (bg-card, text-foreground, text-muted-foreground, bg-primary) successful — no leftover hardcoded stone-*/green-* classes blocking dark mode rendering on any of the 14 pages tested.",
+    "Layout.jsx correctly uses resolvedTheme from useTheme() for the toggle icon swap (Sun/Moon) — no SSR hydration issues observed.",
+    "Native HTML form controls (date input, select) in Members.jsx dialog do not pick up shadcn theme tokens; recommend migrating to shadcn equivalents for visual consistency."
+  ],
+  "updated_files": [],
+  "success_rate": {
+    "backend": "N/A (frontend-only testing as instructed)",
+    "frontend": "100% (all required flows pass; only minor design polish items remain)"
+  },
+  "test_credentials": "admin@twenty20wariyad.com / 5e@fosQSIKC30baCUdMg (from /app/backend/.env ADMIN_PASSWORD)",
+  "seed_data_creation": "None. No test records were created — existing migrated data was used read-only as instructed.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Visual redesign is functionally complete and stable. If revisiting: only outstanding items are (1) replacing native date/select inputs in Members dialog with shadcn variants, and (2) silencing Recharts width(-1)/height(-1) warnings via min-h on chart containers. Backend was not touched in this iteration — last backend test in iteration_5 passed 19/19."
+}

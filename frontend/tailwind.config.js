@@ -7,6 +7,10 @@ module.exports = {
   ],
   theme: {
     extend: {
+      fontFamily: {
+        heading: ['Outfit', 'Noto Sans Malayalam', 'sans-serif'],
+        sans: ['Manrope', 'Noto Sans Malayalam', 'sans-serif']
+      },
       borderRadius: {
         lg: 'var(--radius)',
         md: 'calc(var(--radius) - 2px)',

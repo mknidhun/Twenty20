@@ -48,36 +48,36 @@ function CommitteeDialog({ onSave, onClose }) {
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-stone-900/40 p-4">
-      <div className="bg-white rounded-lg shadow-lg w-full max-w-lg max-h-[90vh] overflow-y-auto">
-        <div className="flex items-center justify-between px-5 py-4 border-b border-stone-200 sticky top-0 bg-white">
-          <h3 className="font-semibold text-stone-900 font-heading">Form New Committee</h3>
-          <button onClick={onClose} className="text-stone-400 hover:text-stone-600"><X size={18} /></button>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+      <div className="bg-card rounded-lg shadow-lg w-full max-w-lg max-h-[90vh] overflow-y-auto">
+        <div className="flex items-center justify-between px-5 py-4 border-b border-border sticky top-0 bg-card">
+          <h3 className="font-semibold text-foreground font-heading">Form New Committee</h3>
+          <button onClick={onClose} className="text-muted-foreground/70 hover:text-foreground"><X size={18} /></button>
         </div>
         <form onSubmit={handleSubmit} className="p-5 space-y-4">
           <div className="grid grid-cols-3 gap-3">
             <div>
-              <label className="block text-sm font-medium text-stone-700 mb-1">Year *</label>
+              <label className="block text-sm font-medium text-foreground mb-1">Year *</label>
               <input type="number" required value={form.year} onChange={e => setForm(p => ({...p, year: +e.target.value}))}
-                className="w-full border border-stone-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-700/30 focus:border-green-700" />
+                className="w-full border border-input rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring/30 focus:border-primary" />
             </div>
             <div>
-              <label className="block text-sm font-medium text-stone-700 mb-1">Start Date</label>
+              <label className="block text-sm font-medium text-foreground mb-1">Start Date</label>
               <input type="date" value={form.start_date} onChange={e => setForm(p => ({...p, start_date: e.target.value}))}
-                className="w-full border border-stone-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-700/30 focus:border-green-700" />
+                className="w-full border border-input rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring/30 focus:border-primary" />
             </div>
             <div>
-              <label className="block text-sm font-medium text-stone-700 mb-1">End Date</label>
+              <label className="block text-sm font-medium text-foreground mb-1">End Date</label>
               <input type="date" value={form.end_date} onChange={e => setForm(p => ({...p, end_date: e.target.value}))}
-                className="w-full border border-stone-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-700/30 focus:border-green-700" />
+                className="w-full border border-input rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring/30 focus:border-primary" />
             </div>
           </div>
 
           <div>
             <div className="flex items-center justify-between mb-2">
-              <label className="text-sm font-medium text-stone-700">Committee Positions</label>
+              <label className="text-sm font-medium text-foreground">Committee Positions</label>
               <button type="button" onClick={addPosition}
-                className="flex items-center gap-1 text-xs text-green-700 hover:text-green-900 font-medium">
+                className="flex items-center gap-1 text-xs text-primary hover:text-primary font-medium">
                 <UserPlus size={14} /> Add Position
               </button>
             </div>
@@ -85,15 +85,15 @@ function CommitteeDialog({ onSave, onClose }) {
               {form.positions.map((pos, i) => (
                 <div key={i} className="flex gap-2 items-start">
                   <select value={pos.position} onChange={e => updatePosition(i, "position", e.target.value)}
-                    className="flex-1 border border-stone-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-700/30">
+                    className="flex-1 border border-input rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring/30">
                     {POSITIONS.map(p => <option key={p} value={p}>{p}</option>)}
                   </select>
                   <input placeholder="Member name"
                     value={pos.member_name} onChange={e => updatePosition(i, "member_name", e.target.value)}
-                    className="flex-1 border border-stone-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-700/30" />
+                    className="flex-1 border border-input rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring/30" />
                   {form.positions.length > 1 && (
                     <button type="button" onClick={() => removePosition(i)}
-                      className="p-2 text-stone-400 hover:text-red-600 hover:bg-red-50 rounded transition-colors">
+                      className="p-2 text-muted-foreground/70 hover:text-destructive hover:bg-destructive/10 rounded transition-colors">
                       <Trash size={14} />
                     </button>
                   )}
@@ -102,11 +102,11 @@ function CommitteeDialog({ onSave, onClose }) {
             </div>
           </div>
 
-          {error && <p className="text-red-600 text-sm bg-red-50 border border-red-200 rounded px-3 py-2">{error}</p>}
+          {error && <p className="text-destructive text-sm bg-destructive/10 border border-destructive/30 rounded px-3 py-2">{error}</p>}
           <div className="flex gap-3">
-            <button type="button" onClick={onClose} className="flex-1 px-4 py-2 border border-stone-300 text-stone-700 rounded-md text-sm hover:bg-stone-50">Cancel</button>
+            <button type="button" onClick={onClose} className="flex-1 px-4 py-2 border border-input text-foreground rounded-md text-sm hover:bg-muted/60">Cancel</button>
             <button type="submit" disabled={loading}
-              className="flex-1 px-4 py-2 bg-green-800 text-white rounded-md text-sm font-medium hover:bg-green-900 disabled:opacity-60">
+              className="flex-1 px-4 py-2 bg-primary text-primary-foreground rounded-md text-sm font-medium hover:bg-primary/90 disabled:opacity-60">
               {loading ? "Saving..." : "Create Committee"}
             </button>
           </div>
@@ -156,49 +156,49 @@ function HandoverDialog({ onSave, onClose }) {
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-stone-900/40 p-4">
-      <div className="bg-white rounded-lg shadow-lg w-full max-w-xl max-h-[90vh] overflow-y-auto">
-        <div className="flex items-center justify-between px-5 py-4 border-b border-stone-200 sticky top-0 bg-white">
-          <h3 className="font-semibold text-stone-900 font-heading">Record Committee Handover</h3>
-          <button onClick={onClose} className="text-stone-400 hover:text-stone-600"><X size={18} /></button>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+      <div className="bg-card rounded-lg shadow-lg w-full max-w-xl max-h-[90vh] overflow-y-auto">
+        <div className="flex items-center justify-between px-5 py-4 border-b border-border sticky top-0 bg-card">
+          <h3 className="font-semibold text-foreground font-heading">Record Committee Handover</h3>
+          <button onClick={onClose} className="text-muted-foreground/70 hover:text-foreground"><X size={18} /></button>
         </div>
         <form onSubmit={handleSubmit} className="p-5 space-y-5">
           {/* Years + Date + Balance */}
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="block text-sm font-medium text-stone-700 mb-1">Outgoing Committee Year</label>
+              <label className="block text-sm font-medium text-foreground mb-1">Outgoing Committee Year</label>
               <input type="number" value={form.from_year} onChange={e => setForm(p => ({...p, from_year: +e.target.value}))}
-                className="w-full border border-stone-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-700/30" />
+                className="w-full border border-input rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring/30" />
             </div>
             <div>
-              <label className="block text-sm font-medium text-stone-700 mb-1">Incoming Committee Year</label>
+              <label className="block text-sm font-medium text-foreground mb-1">Incoming Committee Year</label>
               <input type="number" value={form.to_year} onChange={e => setForm(p => ({...p, to_year: +e.target.value}))}
-                className="w-full border border-stone-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-700/30" />
+                className="w-full border border-input rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring/30" />
             </div>
             <div>
-              <label className="block text-sm font-medium text-stone-700 mb-1">Handover Date *</label>
+              <label className="block text-sm font-medium text-foreground mb-1">Handover Date *</label>
               <input type="date" required value={form.handover_date} onChange={e => setForm(p => ({...p, handover_date: e.target.value}))}
-                className="w-full border border-stone-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-700/30" />
+                className="w-full border border-input rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring/30" />
             </div>
             <div>
-              <label className="block text-sm font-medium text-stone-700 mb-1">Fund Balance at Handover (Rs) *</label>
+              <label className="block text-sm font-medium text-foreground mb-1">Fund Balance at Handover (Rs) *</label>
               <input type="number" step="0.01" min="0" required value={form.fund_balance}
                 onChange={e => setForm(p => ({...p, fund_balance: e.target.value}))}
                 placeholder="0.00"
-                className="w-full border border-stone-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-700/30" />
+                className="w-full border border-input rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring/30" />
             </div>
           </div>
 
           {/* Documents Checklist */}
           <div>
-            <label className="block text-sm font-medium text-stone-700 mb-2">Documents Handed Over</label>
+            <label className="block text-sm font-medium text-foreground mb-2">Documents Handed Over</label>
             <div className="grid grid-cols-2 gap-2">
               {form.documents_checklist.map((d, i) => (
                 <label key={i} className="flex items-center gap-2 cursor-pointer">
                   <input type="checkbox" checked={d.checked} onChange={() => toggleDoc(i)}
                     data-testid={`doc-check-${i}`}
-                    className="w-4 h-4 accent-green-700" />
-                  <span className="text-sm text-stone-700">{d.item}</span>
+                    className="w-4 h-4 accent-[hsl(var(--primary))]" />
+                  <span className="text-sm text-foreground">{d.item}</span>
                 </label>
               ))}
             </div>
@@ -206,14 +206,14 @@ function HandoverDialog({ onSave, onClose }) {
 
           {/* Registers Checklist */}
           <div>
-            <label className="block text-sm font-medium text-stone-700 mb-2">Registers Handed Over</label>
+            <label className="block text-sm font-medium text-foreground mb-2">Registers Handed Over</label>
             <div className="grid grid-cols-2 gap-2">
               {form.registers_checklist.map((r, i) => (
                 <label key={i} className="flex items-center gap-2 cursor-pointer">
                   <input type="checkbox" checked={r.checked} onChange={() => toggleReg(i)}
                     data-testid={`reg-check-${i}`}
-                    className="w-4 h-4 accent-green-700" />
-                  <span className="text-sm text-stone-700">{r.item}</span>
+                    className="w-4 h-4 accent-[hsl(var(--primary))]" />
+                  <span className="text-sm text-foreground">{r.item}</span>
                 </label>
               ))}
             </div>
@@ -221,25 +221,25 @@ function HandoverDialog({ onSave, onClose }) {
 
           {/* Outstanding Items */}
           <div>
-            <label className="block text-sm font-medium text-stone-700 mb-1">Outstanding / Pending Items</label>
+            <label className="block text-sm font-medium text-foreground mb-1">Outstanding / Pending Items</label>
             <textarea value={form.outstanding_items} onChange={e => setForm(p => ({...p, outstanding_items: e.target.value}))} rows={2}
               placeholder="List any pending cases, unresolved issues, outstanding payments..."
-              className="w-full border border-stone-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-700/30" />
+              className="w-full border border-input rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring/30" />
           </div>
 
           {/* Notes */}
           <div>
-            <label className="block text-sm font-medium text-stone-700 mb-1">Additional Notes</label>
+            <label className="block text-sm font-medium text-foreground mb-1">Additional Notes</label>
             <textarea value={form.notes} onChange={e => setForm(p => ({...p, notes: e.target.value}))} rows={2}
               placeholder="Any remarks about the handover..."
-              className="w-full border border-stone-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-700/30" />
+              className="w-full border border-input rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring/30" />
           </div>
 
-          {error && <p className="text-red-600 text-sm bg-red-50 border border-red-200 rounded px-3 py-2">{error}</p>}
+          {error && <p className="text-destructive text-sm bg-destructive/10 border border-destructive/30 rounded px-3 py-2">{error}</p>}
           <div className="flex gap-3">
-            <button type="button" onClick={onClose} className="flex-1 px-4 py-2 border border-stone-300 text-stone-700 rounded-md text-sm hover:bg-stone-50">Cancel</button>
+            <button type="button" onClick={onClose} className="flex-1 px-4 py-2 border border-input text-foreground rounded-md text-sm hover:bg-muted/60">Cancel</button>
             <button type="submit" disabled={loading} data-testid="submit-handover-btn"
-              className="flex-1 px-4 py-2 bg-green-800 text-white rounded-md text-sm font-medium hover:bg-green-900 disabled:opacity-60">
+              className="flex-1 px-4 py-2 bg-primary text-primary-foreground rounded-md text-sm font-medium hover:bg-primary/90 disabled:opacity-60">
               {loading ? "Saving..." : "Record Handover"}
             </button>
           </div>
@@ -283,19 +283,19 @@ export default function Committee() {
     <div className="p-6 space-y-5">
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
-          <h1 className="text-2xl font-bold text-stone-900 font-heading">Committee Management</h1>
-          <p className="text-stone-500 text-sm">Executive committee structure and handover records</p>
+          <h1 className="text-2xl font-bold text-foreground font-heading">Committee Management</h1>
+          <p className="text-muted-foreground text-sm">Executive committee structure and handover records</p>
         </div>
         {canWrite && (
           <div className="flex gap-2">
             {tab === "handovers" ? (
               <button onClick={() => setShowHandover(true)} data-testid="record-handover-btn"
-                className="flex items-center gap-2 bg-green-800 text-white px-4 py-2 rounded-md text-sm font-medium hover:bg-green-900 transition-colors">
+                className="flex items-center gap-2 bg-primary text-primary-foreground px-4 py-2 rounded-md text-sm font-medium hover:bg-primary/90 transition-colors">
                 <ArrowsLeftRight size={16} weight="bold" /> Record Handover
               </button>
             ) : (
               <button onClick={() => setDialog(true)} data-testid={COMMITTEE.addButton}
-                className="flex items-center gap-2 bg-green-800 text-white px-4 py-2 rounded-md text-sm font-medium hover:bg-green-900 transition-colors">
+                className="flex items-center gap-2 bg-primary text-primary-foreground px-4 py-2 rounded-md text-sm font-medium hover:bg-primary/90 transition-colors">
                 <Plus size={16} weight="bold" /> Form Committee
               </button>
             )}
@@ -304,40 +304,40 @@ export default function Committee() {
       </div>
 
       {/* Tabs */}
-      <div className="flex gap-1 border-b border-stone-200">
+      <div className="flex gap-1 border-b border-border">
         {["committees", "handovers"].map(t => (
           <button key={t} onClick={() => setTab(t)}
             className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors capitalize ${
-              tab === t ? "border-green-700 text-green-800" : "border-transparent text-stone-500 hover:text-stone-700"
+              tab === t ? "border-primary text-primary" : "border-transparent text-muted-foreground hover:text-foreground"
             }`}>
             {t === "committees" ? `Committees (${committees.length})` : `Handover Records (${handovers.length})`}
           </button>
         ))}
       </div>
 
-      {loading ? <div className="p-8 text-center text-stone-400">Loading...</div> : (
+      {loading ? <div className="p-8 text-center text-muted-foreground/70">Loading...</div> : (
         <>
           {/* Committees Tab */}
           {tab === "committees" && (
             committees.length === 0 ? (
-              <div className="bg-white border border-stone-200 rounded-lg p-8 text-center text-stone-400">
+              <div className="bg-card border border-border rounded-lg p-8 text-center text-muted-foreground/70">
                 No committees recorded yet
               </div>
             ) : (
               <div className="space-y-4" data-testid={COMMITTEE.table}>
                 {committees.map(c => (
-                  <div key={c.id} className="bg-white border border-stone-200 rounded-lg overflow-hidden">
+                  <div key={c.id} className="bg-card border border-border rounded-lg overflow-hidden">
                     <div
-                      className="flex items-center justify-between px-5 py-4 cursor-pointer hover:bg-stone-50 transition-colors"
+                      className="flex items-center justify-between px-5 py-4 cursor-pointer hover:bg-muted/60 transition-colors"
                       onClick={() => setExpanded(expanded === c.id ? null : c.id)}
                     >
                       <div className="flex items-center gap-3">
-                        <div className="w-10 h-10 bg-green-50 rounded-full flex items-center justify-center text-green-800 font-bold text-sm">
+                        <div className="w-10 h-10 bg-primary/10 rounded-full flex items-center justify-center text-primary font-bold text-sm">
                           {c.year}
                         </div>
                         <div>
-                          <p className="font-semibold text-stone-900 font-heading">Committee {c.year}</p>
-                          <p className="text-xs text-stone-500">
+                          <p className="font-semibold text-foreground font-heading">Committee {c.year}</p>
+                          <p className="text-xs text-muted-foreground">
                             {c.start_date ? new Date(c.start_date).toLocaleDateString("en-IN") : ""} — {c.end_date ? new Date(c.end_date).toLocaleDateString("en-IN") : ""}
                             · {c.positions?.length} members
                           </p>
@@ -349,19 +349,19 @@ export default function Committee() {
                         </span>
                         {canWrite && user?.role === "super_admin" && (
                           <button onClick={(e) => { e.stopPropagation(); handleDelete(c.id); }}
-                            className="p-1.5 text-stone-400 hover:text-red-600 hover:bg-red-50 rounded transition-colors">
+                            className="p-1.5 text-muted-foreground/70 hover:text-destructive hover:bg-destructive/10 rounded transition-colors">
                             <Trash size={14} />
                           </button>
                         )}
                       </div>
                     </div>
                     {expanded === c.id && c.positions && (
-                      <div className="border-t border-stone-100 px-5 py-4">
+                      <div className="border-t border-border px-5 py-4">
                         <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
                           {c.positions.map((pos, i) => (
-                            <div key={i} className="bg-stone-50 rounded-md px-3 py-2.5">
-                              <p className="text-xs font-semibold text-stone-500 uppercase tracking-wide">{pos.position}</p>
-                              <p className="text-sm font-medium text-stone-900 mt-0.5">{pos.member_name || "—"}</p>
+                            <div key={i} className="bg-muted/50 rounded-md px-3 py-2.5">
+                              <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">{pos.position}</p>
+                              <p className="text-sm font-medium text-foreground mt-0.5">{pos.member_name || "—"}</p>
                             </div>
                           ))}
                         </div>
@@ -376,51 +376,51 @@ export default function Committee() {
           {/* Handovers Tab */}
           {tab === "handovers" && (
             handovers.length === 0 ? (
-              <div className="bg-white border border-stone-200 rounded-lg p-8 text-center text-stone-400">
+              <div className="bg-card border border-border rounded-lg p-8 text-center text-muted-foreground/70">
                 No handover records yet. Record a handover when a committee term ends.
               </div>
             ) : (
               <div className="space-y-4" data-testid="handovers-list">
                 {handovers.map(h => (
-                  <div key={h.id} className="bg-white border border-stone-200 rounded-lg p-5 space-y-4">
+                  <div key={h.id} className="bg-card border border-border rounded-lg p-5 space-y-4">
                     <div className="flex items-start justify-between">
                       <div>
-                        <p className="font-semibold text-stone-900 font-heading text-base">
+                        <p className="font-semibold text-foreground font-heading text-base">
                           Committee {h.from_year} → {h.to_year}
                         </p>
-                        <p className="text-xs text-stone-500 mt-0.5">
+                        <p className="text-xs text-muted-foreground mt-0.5">
                           Handover on {h.handover_date ? new Date(h.handover_date).toLocaleDateString("en-IN", {day:"numeric",month:"long",year:"numeric"}) : "—"} · Recorded by {h.recorded_by_name}
                         </p>
                       </div>
-                      <div className="bg-green-50 border border-green-200 rounded-md px-3 py-1.5 text-center">
-                        <p className="text-xs text-green-600 font-medium">Fund Balance</p>
-                        <p className="text-lg font-bold text-green-800 font-heading">₹{h.fund_balance?.toLocaleString("en-IN")}</p>
+                      <div className="bg-primary/10 border border-primary/25 rounded-md px-3 py-1.5 text-center">
+                        <p className="text-xs text-primary font-medium">Fund Balance</p>
+                        <p className="text-lg font-bold text-primary font-heading">₹{h.fund_balance?.toLocaleString("en-IN")}</p>
                       </div>
                     </div>
 
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                       <div>
-                        <p className="text-xs font-semibold uppercase tracking-wide text-stone-500 mb-2">Documents</p>
+                        <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-2">Documents</p>
                         <div className="space-y-1">
                           {(h.documents_checklist || []).map((d, i) => (
                             <div key={i} className="flex items-center gap-2">
-                              <span className={`w-4 h-4 rounded flex-shrink-0 flex items-center justify-center text-xs ${d.checked ? "bg-green-100 text-green-700" : "bg-stone-100 text-stone-400"}`}>
+                              <span className={`w-4 h-4 rounded flex-shrink-0 flex items-center justify-center text-xs ${d.checked ? "bg-primary/15 text-primary" : "bg-muted text-muted-foreground/70"}`}>
                                 {d.checked ? "✓" : "—"}
                               </span>
-                              <span className={`text-sm ${d.checked ? "text-stone-700" : "text-stone-400 line-through"}`}>{d.item}</span>
+                              <span className={`text-sm ${d.checked ? "text-foreground" : "text-muted-foreground/70 line-through"}`}>{d.item}</span>
                             </div>
                           ))}
                         </div>
                       </div>
                       <div>
-                        <p className="text-xs font-semibold uppercase tracking-wide text-stone-500 mb-2">Registers</p>
+                        <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-2">Registers</p>
                         <div className="space-y-1">
                           {(h.registers_checklist || []).map((r, i) => (
                             <div key={i} className="flex items-center gap-2">
-                              <span className={`w-4 h-4 rounded flex-shrink-0 flex items-center justify-center text-xs ${r.checked ? "bg-green-100 text-green-700" : "bg-stone-100 text-stone-400"}`}>
+                              <span className={`w-4 h-4 rounded flex-shrink-0 flex items-center justify-center text-xs ${r.checked ? "bg-primary/15 text-primary" : "bg-muted text-muted-foreground/70"}`}>
                                 {r.checked ? "✓" : "—"}
                               </span>
-                              <span className={`text-sm ${r.checked ? "text-stone-700" : "text-stone-400 line-through"}`}>{r.item}</span>
+                              <span className={`text-sm ${r.checked ? "text-foreground" : "text-muted-foreground/70 line-through"}`}>{r.item}</span>
                             </div>
                           ))}
                         </div>
@@ -429,14 +429,14 @@ export default function Committee() {
 
                     {h.outstanding_items && (
                       <div>
-                        <p className="text-xs font-semibold uppercase tracking-wide text-stone-500 mb-1">Outstanding Items</p>
-                        <p className="text-sm text-amber-800 bg-amber-50 border border-amber-200 rounded p-3">{h.outstanding_items}</p>
+                        <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-1">Outstanding Items</p>
+                        <p className="text-sm text-amber-600 dark:text-amber-400 bg-amber-500/10 border border-amber-500/30 rounded p-3">{h.outstanding_items}</p>
                       </div>
                     )}
                     {h.notes && (
                       <div>
-                        <p className="text-xs font-semibold uppercase tracking-wide text-stone-500 mb-1">Notes</p>
-                        <p className="text-sm text-stone-600">{h.notes}</p>
+                        <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-1">Notes</p>
+                        <p className="text-sm text-muted-foreground">{h.notes}</p>
                       </div>
                     )}
                   </div>

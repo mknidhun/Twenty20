@@ -36,41 +36,41 @@ function MeetingDialog({ onSave, onClose }) {
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-stone-900/40 p-4">
-      <div className="bg-white rounded-lg shadow-lg w-full max-w-md max-h-[90vh] overflow-y-auto">
-        <div className="flex items-center justify-between px-5 py-4 border-b border-stone-200 sticky top-0 bg-white">
-          <h3 className="font-semibold text-stone-900 font-heading">Schedule Meeting</h3>
-          <button onClick={onClose} className="text-stone-400 hover:text-stone-600"><X size={18} /></button>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+      <div className="bg-card rounded-lg shadow-lg w-full max-w-md max-h-[90vh] overflow-y-auto">
+        <div className="flex items-center justify-between px-5 py-4 border-b border-border sticky top-0 bg-card">
+          <h3 className="font-semibold text-foreground font-heading">Schedule Meeting</h3>
+          <button onClick={onClose} className="text-muted-foreground/70 hover:text-foreground"><X size={18} /></button>
         </div>
         <form onSubmit={handleSubmit} className="p-5 space-y-4">
           <div>
-            <label className="block text-sm font-medium text-stone-700 mb-1">Meeting Type *</label>
+            <label className="block text-sm font-medium text-foreground mb-1">Meeting Type *</label>
             <select required value={form.meeting_type} onChange={e => setForm(p => ({...p, meeting_type: e.target.value}))}
-              className="w-full border border-stone-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-700/30 focus:border-green-700">
+              className="w-full border border-input rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring/30 focus:border-primary">
               {MEETING_TYPES.map(t => <option key={t} value={t}>{TYPE_LABELS[t]}</option>)}
             </select>
           </div>
           <div>
-            <label className="block text-sm font-medium text-stone-700 mb-1">Title *</label>
+            <label className="block text-sm font-medium text-foreground mb-1">Title *</label>
             <input required value={form.title} onChange={e => setForm(p => ({...p, title: e.target.value}))}
-              className="w-full border border-stone-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-700/30 focus:border-green-700" />
+              className="w-full border border-input rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring/30 focus:border-primary" />
           </div>
           <div>
-            <label className="block text-sm font-medium text-stone-700 mb-1">Date *</label>
+            <label className="block text-sm font-medium text-foreground mb-1">Date *</label>
             <input type="date" required value={form.scheduled_date} onChange={e => setForm(p => ({...p, scheduled_date: e.target.value}))}
-              className="w-full border border-stone-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-700/30 focus:border-green-700" />
+              className="w-full border border-input rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring/30 focus:border-primary" />
           </div>
           <div>
-            <label className="block text-sm font-medium text-stone-700 mb-1">Agenda *</label>
+            <label className="block text-sm font-medium text-foreground mb-1">Agenda *</label>
             <textarea required value={form.agenda} onChange={e => setForm(p => ({...p, agenda: e.target.value}))} rows={3}
               placeholder="List the agenda items..."
-              className="w-full border border-stone-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-700/30 focus:border-green-700" />
+              className="w-full border border-input rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring/30 focus:border-primary" />
           </div>
-          {error && <p className="text-red-600 text-sm bg-red-50 border border-red-200 rounded px-3 py-2">{error}</p>}
+          {error && <p className="text-destructive text-sm bg-destructive/10 border border-destructive/30 rounded px-3 py-2">{error}</p>}
           <div className="flex gap-3">
-            <button type="button" onClick={onClose} className="flex-1 px-4 py-2 border border-stone-300 text-stone-700 rounded-md text-sm hover:bg-stone-50">Cancel</button>
+            <button type="button" onClick={onClose} className="flex-1 px-4 py-2 border border-input text-foreground rounded-md text-sm hover:bg-muted/60">Cancel</button>
             <button type="submit" disabled={loading}
-              className="flex-1 px-4 py-2 bg-green-800 text-white rounded-md text-sm font-medium hover:bg-green-900 disabled:opacity-60">
+              className="flex-1 px-4 py-2 bg-primary text-primary-foreground rounded-md text-sm font-medium hover:bg-primary/90 disabled:opacity-60">
               {loading ? "Scheduling..." : "Schedule Meeting"}
             </button>
           </div>
@@ -112,54 +112,54 @@ function MinutesDialog({ meeting, onSave, onClose }) {
     }
   };
 
-  const statusColors = { passed: "text-green-700 bg-green-50 border-green-200", failed: "text-red-700 bg-red-50 border-red-200", tabled: "text-amber-700 bg-amber-50 border-amber-200" };
+  const statusColors = { passed: "text-primary bg-primary/10 border-primary/25", failed: "text-destructive bg-destructive/10 border-destructive/30", tabled: "text-amber-600 dark:text-amber-400 bg-amber-500/10 border-amber-500/30" };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-stone-900/40 p-4">
-      <div className="bg-white rounded-lg shadow-lg w-full max-w-xl max-h-[90vh] overflow-y-auto">
-        <div className="flex items-center justify-between px-5 py-4 border-b border-stone-200 sticky top-0 bg-white">
-          <h3 className="font-semibold text-stone-900 font-heading">Minutes — {meeting.title}</h3>
-          <button onClick={onClose} className="text-stone-400 hover:text-stone-600"><X size={18} /></button>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+      <div className="bg-card rounded-lg shadow-lg w-full max-w-xl max-h-[90vh] overflow-y-auto">
+        <div className="flex items-center justify-between px-5 py-4 border-b border-border sticky top-0 bg-card">
+          <h3 className="font-semibold text-foreground font-heading">Minutes — {meeting.title}</h3>
+          <button onClick={onClose} className="text-muted-foreground/70 hover:text-foreground"><X size={18} /></button>
         </div>
         <form onSubmit={handleSubmit} className="p-5 space-y-4">
           <div>
-            <label className="block text-sm font-medium text-stone-700 mb-1">Status</label>
+            <label className="block text-sm font-medium text-foreground mb-1">Status</label>
             <select value={form.status} onChange={e => setForm(p => ({...p, status: e.target.value}))}
-              className="w-full border border-stone-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-700/30">
+              className="w-full border border-input rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring/30">
               <option value="scheduled">Scheduled</option>
               <option value="completed">Completed</option>
               <option value="cancelled">Cancelled</option>
             </select>
           </div>
           <div>
-            <label className="block text-sm font-medium text-stone-700 mb-1">Minutes of Meeting</label>
+            <label className="block text-sm font-medium text-foreground mb-1">Minutes of Meeting</label>
             <textarea value={form.minutes} onChange={e => setForm(p => ({...p, minutes: e.target.value}))} rows={4}
               placeholder="Record the proceedings of the meeting..."
-              className="w-full border border-stone-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-700/30" />
+              className="w-full border border-input rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring/30" />
           </div>
 
           {/* Structured Resolutions */}
           <div>
             <div className="flex items-center justify-between mb-2">
-              <label className="text-sm font-medium text-stone-700">Resolutions</label>
+              <label className="text-sm font-medium text-foreground">Resolutions</label>
               <button type="button" onClick={addResolution}
-                className="flex items-center gap-1 text-xs text-green-700 hover:text-green-900 font-medium">
+                className="flex items-center gap-1 text-xs text-primary hover:text-primary font-medium">
                 <Plus size={13} weight="bold" /> Add Resolution
               </button>
             </div>
             {form.resolutions_list.length === 0 ? (
-              <p className="text-xs text-stone-400 italic">No resolutions yet. Click "Add Resolution" to begin.</p>
+              <p className="text-xs text-muted-foreground/70 italic">No resolutions yet. Click "Add Resolution" to begin.</p>
             ) : (
               <div className="space-y-2">
                 {form.resolutions_list.map((res, i) => (
                   <div key={i} className="flex gap-2 items-start">
-                    <span className="text-xs font-bold text-stone-400 mt-2.5 w-5 flex-shrink-0">{i+1}.</span>
+                    <span className="text-xs font-bold text-muted-foreground/70 mt-2.5 w-5 flex-shrink-0">{i+1}.</span>
                     <input
                       value={res.text}
                       onChange={e => updateResolution(i, "text", e.target.value)}
                       placeholder="Resolution text..."
                       data-testid={`resolution-text-${i}`}
-                      className="flex-1 border border-stone-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-700/30"
+                      className="flex-1 border border-input rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring/30"
                     />
                     <select
                       value={res.status}
@@ -170,7 +170,7 @@ function MinutesDialog({ meeting, onSave, onClose }) {
                       {RESOLUTION_STATUSES.map(s => <option key={s} value={s}>{s.charAt(0).toUpperCase()+s.slice(1)}</option>)}
                     </select>
                     <button type="button" onClick={() => removeResolution(i)}
-                      className="p-2 text-stone-400 hover:text-red-600 hover:bg-red-50 rounded transition-colors flex-shrink-0">
+                      className="p-2 text-muted-foreground/70 hover:text-destructive hover:bg-destructive/10 rounded transition-colors flex-shrink-0">
                       <Trash size={13} />
                     </button>
                   </div>
@@ -180,9 +180,9 @@ function MinutesDialog({ meeting, onSave, onClose }) {
           </div>
 
           <div className="flex gap-3">
-            <button type="button" onClick={onClose} className="flex-1 px-4 py-2 border border-stone-300 text-stone-700 rounded-md text-sm hover:bg-stone-50">Cancel</button>
+            <button type="button" onClick={onClose} className="flex-1 px-4 py-2 border border-input text-foreground rounded-md text-sm hover:bg-muted/60">Cancel</button>
             <button type="submit" disabled={loading}
-              className="flex-1 px-4 py-2 bg-green-800 text-white rounded-md text-sm font-medium hover:bg-green-900 disabled:opacity-60">
+              className="flex-1 px-4 py-2 bg-primary text-primary-foreground rounded-md text-sm font-medium hover:bg-primary/90 disabled:opacity-60">
               {loading ? "Saving..." : "Save Minutes"}
             </button>
           </div>
@@ -228,12 +228,12 @@ export default function Meetings() {
     <div className="p-6 space-y-5">
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
-          <h1 className="text-2xl font-bold text-stone-900 font-heading">Meetings</h1>
-          <p className="text-stone-500 text-sm">Schedule and track committee meetings</p>
+          <h1 className="text-2xl font-bold text-foreground font-heading">Meetings</h1>
+          <p className="text-muted-foreground text-sm">Schedule and track committee meetings</p>
         </div>
         {canWrite && (
           <button onClick={() => setDialog("new")} data-testid={MEETINGS.addButton}
-            className="flex items-center gap-2 bg-green-800 text-white px-4 py-2 rounded-md text-sm font-medium hover:bg-green-900 transition-colors">
+            className="flex items-center gap-2 bg-primary text-primary-foreground px-4 py-2 rounded-md text-sm font-medium hover:bg-primary/90 transition-colors">
             <Plus size={16} weight="bold" /> Schedule Meeting
           </button>
         )}
@@ -242,15 +242,15 @@ export default function Meetings() {
       <div className="grid grid-cols-3 gap-4">
         {["scheduled","completed","cancelled"].map(st => (
           <div key={st} className="stat-card">
-            <p className="text-xs font-semibold uppercase tracking-wide text-stone-500 mb-1 capitalize">{st}</p>
-            <p className="text-2xl font-bold text-stone-900 font-heading">{meetings.filter(m => m.status === st).length}</p>
+            <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-1 capitalize">{st}</p>
+            <p className="text-2xl font-bold text-foreground font-heading">{meetings.filter(m => m.status === st).length}</p>
           </div>
         ))}
       </div>
 
       <div className="flex gap-3">
         <select value={filterStatus} onChange={e => setFilterStatus(e.target.value)}
-          className="border border-stone-300 rounded-md px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-green-700/30">
+          className="border border-input rounded-md px-3 py-2 text-sm bg-card focus:outline-none focus:ring-2 focus:ring-ring/30">
           <option value="all">All Meetings</option>
           <option value="scheduled">Scheduled</option>
           <option value="completed">Completed</option>
@@ -258,9 +258,9 @@ export default function Meetings() {
         </select>
       </div>
 
-      <div className="bg-white border border-stone-200 rounded-lg overflow-hidden" data-testid={MEETINGS.table}>
-        {loading ? <div className="p-8 text-center text-stone-400">Loading...</div> :
-          filtered.length === 0 ? <div className="p-8 text-center text-stone-400">No meetings found</div> : (
+      <div className="bg-card border border-border rounded-lg overflow-hidden" data-testid={MEETINGS.table}>
+        {loading ? <div className="p-8 text-center text-muted-foreground/70">Loading...</div> :
+          filtered.length === 0 ? <div className="p-8 text-center text-muted-foreground/70">No meetings found</div> : (
             <div className="overflow-x-auto">
               <table className="w-full data-table">
                 <thead>
@@ -276,16 +276,16 @@ export default function Meetings() {
                 <tbody>
                   {filtered.map(m => (
                     <tr key={m.id}>
-                      <td className="font-medium text-stone-900">{m.title}</td>
+                      <td className="font-medium text-foreground">{m.title}</td>
                       <td>
-                        <span className="text-xs bg-stone-100 px-2 py-0.5 rounded">{TYPE_LABELS[m.meeting_type] || m.meeting_type}</span>
+                        <span className="text-xs bg-muted px-2 py-0.5 rounded">{TYPE_LABELS[m.meeting_type] || m.meeting_type}</span>
                       </td>
                       <td>{m.scheduled_date ? new Date(m.scheduled_date).toLocaleDateString("en-IN") : "-"}</td>
                       <td>
                         {m.resolutions_list && m.resolutions_list.length > 0 ? (
-                          <span className="text-xs text-stone-600">{m.resolutions_list.length} resolution{m.resolutions_list.length > 1 ? "s" : ""} ({m.resolutions_list.filter(r=>r.status==="passed").length} passed)</span>
+                          <span className="text-xs text-muted-foreground">{m.resolutions_list.length} resolution{m.resolutions_list.length > 1 ? "s" : ""} ({m.resolutions_list.filter(r=>r.status==="passed").length} passed)</span>
                         ) : (
-                          <span className="text-xs text-stone-400 italic">—</span>
+                          <span className="text-xs text-muted-foreground/70 italic">—</span>
                         )}
                       </td>
                       <td>
@@ -297,19 +297,19 @@ export default function Meetings() {
                         <div className="flex gap-1.5">
                           {canWrite && (
                             <button onClick={() => setDialog(m)}
-                              className="px-2.5 py-1 text-xs bg-stone-100 text-stone-700 rounded hover:bg-stone-200">
+                              className="px-2.5 py-1 text-xs bg-muted text-foreground rounded hover:bg-muted">
                               Minutes
                             </button>
                           )}
                           <button onClick={() => handleDownloadMinutes(m)}
                             data-testid="minutes-pdf-btn"
                             title="Download Minutes PDF"
-                            className="p-1.5 text-stone-400 hover:text-red-700 hover:bg-red-50 rounded transition-colors">
+                            className="p-1.5 text-muted-foreground/70 hover:text-destructive hover:bg-destructive/10 rounded transition-colors">
                             <FilePdf size={14} />
                           </button>
                           {canWrite && user?.role === "super_admin" && (
                             <button onClick={() => handleDelete(m.id)}
-                              className="p-1.5 text-stone-400 hover:text-red-600 hover:bg-red-50 rounded transition-colors">
+                              className="p-1.5 text-muted-foreground/70 hover:text-destructive hover:bg-destructive/10 rounded transition-colors">
                               <X size={13} />
                             </button>
                           )}

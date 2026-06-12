@@ -1,4 +1,4 @@
-@import url('https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=Manrope:wght@400;500;600;700;800&family=Noto+Sans+Malayalam:wght@400;500;600;700&display=swap');
 
 @tailwind base;
 @tailwind components;
@@ -6,41 +6,68 @@
 
 body {
   margin: 0;
-  font-family: 'IBM Plex Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+  font-family: 'Manrope', 'Noto Sans Malayalam', -apple-system, BlinkMacSystemFont, sans-serif;
   -webkit-font-smoothing: antialiased;
 }
 
 h1, h2, h3, h4, h5, h6 {
-  font-family: 'Manrope', sans-serif;
+  font-family: 'Outfit', 'Noto Sans Malayalam', sans-serif;
 }
 
 @layer base {
   :root {
-    --background: 60 9% 96%;
-    --foreground: 20 8% 10%;
+    --background: 60 20% 98%;
+    --foreground: 150 20% 10%;
     --card: 0 0% 100%;
-    --card-foreground: 20 8% 10%;
+    --card-foreground: 150 20% 10%;
     --popover: 0 0% 100%;
-    --popover-foreground: 20 8% 10%;
-    --primary: 143 64% 24%;
+    --popover-foreground: 150 20% 10%;
+    --primary: 145 40% 32%;
     --primary-foreground: 0 0% 100%;
-    --secondary: 30 6% 93%;
-    --secondary-foreground: 20 8% 20%;
-    --muted: 30 6% 93%;
-    --muted-foreground: 25 6% 45%;
-    --accent: 30 6% 93%;
-    --accent-foreground: 20 8% 10%;
-    --destructive: 0 84% 60%;
-    --destructive-foreground: 0 0% 98%;
-    --border: 24 5% 88%;
-    --input: 24 5% 88%;
-    --ring: 143 64% 24%;
+    --secondary: 145 20% 92%;
+    --secondary-foreground: 145 40% 20%;
+    --muted: 145 15% 94%;
+    --muted-foreground: 150 10% 45%;
+    --accent: 35 55% 64%;
+    --accent-foreground: 150 20% 10%;
+    --destructive: 0 70% 50%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 145 20% 88%;
+    --input: 145 20% 88%;
+    --ring: 145 40% 32%;
     --radius: 0.5rem;
-    --chart-1: 143 64% 24%;
-    --chart-2: 210 64% 45%;
-    --chart-3: 43 74% 50%;
-    --chart-4: 0 84% 55%;
-    --chart-5: 280 55% 50%;
+    --chart-1: 145 40% 32%;
+    --chart-2: 35 55% 54%;
+    --chart-3: 200 38% 46%;
+    --chart-4: 15 60% 55%;
+    --chart-5: 160 20% 50%;
+  }
+
+  .dark {
+    --background: 150 25% 6%;
+    --foreground: 145 15% 90%;
+    --card: 150 20% 9%;
+    --card-foreground: 145 15% 90%;
+    --popover: 150 20% 9%;
+    --popover-foreground: 145 15% 90%;
+    --primary: 145 45% 45%;
+    --primary-foreground: 150 25% 6%;
+    --secondary: 150 20% 15%;
+    --secondary-foreground: 145 15% 90%;
+    --muted: 150 20% 15%;
+    --muted-foreground: 145 10% 60%;
+    --accent: 35 60% 55%;
+    --accent-foreground: 150 25% 6%;
+    --destructive: 0 60% 50%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 150 20% 16%;
+    --input: 150 20% 18%;
+    --ring: 145 45% 45%;
+    --chart-1: 145 45% 45%;
+    --chart-2: 35 60% 55%;
+    --chart-3: 200 30% 60%;
+    --chart-4: 15 65% 60%;
+    --chart-5: 160 25% 45%;
   }
 }
 
@@ -49,51 +76,82 @@ h1, h2, h3, h4, h5, h6 {
   body { @apply bg-background text-foreground; }
 }
 
+::selection {
+  background: hsl(var(--primary) / 0.2);
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: hsl(var(--muted-foreground) / 0.25);
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: hsl(var(--muted-foreground) / 0.45);
+}
+
 /* Sidebar */
 .sidebar-link {
-  @apply flex items-center gap-3 px-3 py-2.5 rounded-md text-stone-600 hover:bg-green-50 hover:text-green-800 transition-colors duration-150 text-sm font-medium;
+  @apply relative flex items-center gap-3 px-3 py-2.5 rounded-md text-muted-foreground hover:bg-primary/10 hover:text-primary text-sm font-medium;
+  transition: background-color 0.2s ease-in-out, color 0.2s ease-in-out;
 }
 .sidebar-link.active {
-  @apply bg-green-50 text-green-800 font-semibold;
+  @apply bg-primary/10 text-primary font-semibold;
+}
+.sidebar-link.active::before {
+  content: "";
+  @apply absolute left-0 top-1/2 -translate-y-1/2 w-1 h-5 rounded-r-full bg-primary;
 }
 .sidebar-link.active .sidebar-icon {
-  @apply text-green-700;
+  @apply text-primary;
 }
 
 /* Status badges */
 .badge-paid, .badge-active, .badge-delivered, .badge-approved {
-  @apply bg-green-50 text-green-800 border-green-200;
+  @apply bg-primary/10 text-primary border-primary/25;
 }
 .badge-pending {
-  @apply bg-amber-50 text-amber-800 border-amber-200;
+  @apply bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/30;
 }
 .badge-rejected, .badge-deceased, .badge-inactive {
-  @apply bg-red-50 text-red-700 border-red-200;
+  @apply bg-destructive/10 text-destructive border-destructive/30;
 }
 .badge-resigned {
-  @apply bg-slate-100 text-slate-600 border-slate-200;
+  @apply bg-muted text-muted-foreground border-border;
 }
 .badge-under_review, .badge-secretary_verified, .badge-committee_approved {
-  @apply bg-blue-50 text-blue-800 border-blue-200;
+  @apply bg-sky-500/10 text-sky-600 dark:text-sky-400 border-sky-500/30;
 }
 
 /* Table styles */
 .data-table thead tr {
-  @apply bg-stone-50 border-b border-stone-200;
+  @apply bg-muted/50 border-b border-border;
 }
 .data-table thead th {
-  @apply text-xs font-semibold uppercase tracking-wide text-stone-500 px-4 py-3;
+  @apply text-xs font-bold uppercase tracking-wider text-muted-foreground px-4 py-3;
 }
 .data-table tbody tr {
-  @apply border-b border-stone-100 hover:bg-stone-50 transition-colors duration-100;
+  @apply border-b border-border/60 hover:bg-muted/40;
+  transition: background-color 0.15s ease-in-out;
 }
 .data-table tbody td {
-  @apply px-4 py-3 text-sm text-stone-700;
+  @apply px-4 py-3 text-sm text-foreground/90 leading-relaxed;
 }
 
 /* Card styles */
 .stat-card {
-  @apply bg-white border border-stone-200 rounded-lg p-5 hover:shadow-sm transition-shadow;
+  @apply bg-card border border-border rounded-lg p-5;
+  transition: transform 0.2s ease-in-out, box-shadow 0.2s ease-in-out;
+}
+.stat-card:hover {
+  transform: translateY(-3px);
+  @apply shadow-md;
 }
 
 /* Fade in animation */
