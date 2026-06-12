@@ -79,6 +79,16 @@ def safe_oid(val: str) -> ObjectId:
     """Convert a path/query param to ObjectId, raising 400 on bad input."""
     if not ObjectId.is_valid(val):
         raise HTTPException(400, "Invalid ID format")
+
+def _member_owns(user: dict, member: dict) -> bool:
+    """True if `user` (role=member) is the member record `member`.
+    Matches on either the Mongo _id or the TW- member code, so the check
+    is robust to how the user account was linked."""
+    if not member:
+        return False
+    uid = str(user.get("member_id") or "")
+    return uid in (str(member.get("_id", "")), str(member.get("member_id", "")))
+
     return ObjectId(val)
 
 # ── Brute-force rate limiter (in-memory, 5 attempts / 15 min per email+IP) ───
@@ -523,8 +533,8 @@ async def download_member_qr_card(mid: str, user: dict = Depends(get_current_use
     member = await db.members.find_one({"_id": safe_oid(mid)})
     if not member:
         raise HTTPException(404, "Member not found")
-    # Members can only download their own QR card
-    if user["role"] == "member" and user.get("member_id") != mid:
+    # Members can only download their own QR card (match on _id or TW- code)
+    if user["role"] == "member" and not _member_owns(user, member):
         raise HTTPException(403, "Access denied")
     pdf_bytes = build_member_qr_card(member)
     name_slug = member.get("name", "member").replace(" ", "_")
@@ -1243,9 +1253,14 @@ async def download_receipt(contrib_id: str, user: dict = Depends(get_current_use
     contrib = await db.contributions.find_one({"_id": safe_oid(contrib_id)})
     if not contrib:
         raise HTTPException(404, "Contribution not found")
-    # Members can only download their own receipts
-    if user["role"] == "member" and contrib.get("member_id") != user.get("member_id"):
-        raise HTTPException(403, "Access denied")
+    # Members can only download their own receipts (match on _id or TW- code)
+    if user["role"] == "member":
+        owner = None
+        cmid = contrib.get("member_id")
+        if cmid and ObjectId.is_valid(cmid):
+            owner = await db.members.find_one({"_id": ObjectId(cmid)})
+        if not _member_owns(user, owner):
+            raise HTTPException(403, "Access denied")
     member = None
     if contrib.get("member_id") and ObjectId.is_valid(contrib["member_id"]):
         try:
