@@ -12,6 +12,7 @@ export default function Reports() {
   const [memberReport, setMemberReport] = useState(null);
   const [contribReport, setContribReport] = useState(null);
   const [benefitReport, setBenefitReport] = useState(null);
+  const [summary, setSummary] = useState(null);
   const [year, setYear] = useState(new Date().getFullYear());
   const [loading, setLoading] = useState(true);
   const [exporting, setExporting] = useState(null);
@@ -22,11 +23,13 @@ export default function Reports() {
     Promise.all([
       api.get("/reports/members"),
       api.get(`/reports/contributions/${year}`),
-      api.get("/reports/benefits")
-    ]).then(([m, c, b]) => {
+      api.get("/reports/benefits"),
+      api.get(`/reports/summary?from_ym=${year}-01&to_ym=${year}-12`).catch(() => ({ data: null })),
+    ]).then(([m, c, b, su]) => {
       setMemberReport(m.data);
       setContribReport(c.data);
       setBenefitReport(b.data);
+      setSummary(su.data);
     }).finally(() => setLoading(false));
   }, [year]);
 
@@ -156,6 +159,43 @@ export default function Reports() {
         </ResponsiveContainer>
         <p className="text-xs text-muted-foreground/70 mt-2">Green = Amount (₹), Amber = No. of members</p>
       </div>
+
+      {/* Contribution Summary (ledger) */}
+      {summary && summary.rows && summary.rows.length > 0 && (
+        <div className="bg-card border border-border rounded-lg p-5">
+          <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
+            <h3 className="font-semibold text-foreground font-heading">Monthly Contribution Summary — {year}</h3>
+            <div className="flex gap-4 text-sm">
+              <span className="text-muted-foreground">Collected: <b className="text-foreground">₹{(summary.total_collected||0).toLocaleString("en-IN")}</b></span>
+              <span className="text-muted-foreground">Outstanding: <b className="text-amber-600">₹{(summary.current_outstanding||0).toLocaleString("en-IN")}</b></span>
+              <span className="text-muted-foreground">Advance: <b className="text-sky-600">₹{(summary.current_advance||0).toLocaleString("en-IN")}</b></span>
+            </div>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full data-table text-sm">
+              <thead><tr>
+                <th>Month</th><th className="text-right">Members</th><th className="text-right">Up to Date</th>
+                <th className="text-right">Pending</th><th className="text-right">Advance</th>
+                <th className="text-right">Collected</th><th className="text-right">Outstanding</th><th className="text-right">Rate</th>
+              </tr></thead>
+              <tbody>
+                {summary.rows.map((r, i) => (
+                  <tr key={i}>
+                    <td className="font-medium">{MONTHS[r.month]} {r.year}</td>
+                    <td className="text-right">{r.members}</td>
+                    <td className="text-right text-emerald-600">{r.up_to_date}</td>
+                    <td className="text-right text-amber-600">{r.pending}</td>
+                    <td className="text-right text-sky-600">{r.advance}</td>
+                    <td className="text-right">₹{(r.collected||0).toLocaleString("en-IN")}</td>
+                    <td className="text-right text-amber-600">₹{(r.outstanding||0).toLocaleString("en-IN")}</td>
+                    <td className="text-right">{Math.round((r.collection_rate||0)*100)}%</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
 
       {/* Benefits Summary */}
       <div className="bg-card border border-border rounded-lg p-5">

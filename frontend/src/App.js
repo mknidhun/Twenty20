@@ -17,6 +17,7 @@ import Reports from "@/pages/Reports";
 import Users from "@/pages/Users";
 import Notifications from "@/pages/Notifications";
 import Audit from "@/pages/Audit";
+import Settings from "@/pages/Settings";
 
 function ProtectedRoute({ children }) {
   const { user } = useAuth();
@@ -52,6 +53,7 @@ function AppRoutes() {
         <Route path="users" element={<Users />} />
         <Route path="notifications" element={<Notifications />} />
         <Route path="audit" element={<Audit />} />
+        <Route path="settings" element={<Settings />} />
       </Route>
     </Routes>
   );
