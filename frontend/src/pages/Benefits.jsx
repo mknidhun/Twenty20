@@ -42,7 +42,7 @@ function ApplyDialog({ members, onSave, onClose }) {
       <div className="bg-card rounded-lg shadow-lg w-full max-w-md">
         <div className="flex items-center justify-between px-5 py-4 border-b border-border">
           <h3 className="font-semibold text-foreground font-heading">Apply for Benefit</h3>
-          <button onClick={onClose} className="text-muted-foreground/70 hover:text-foreground"><X size={18} /></button>
+          <button onClick={onClose} className="text-muted-foreground/70 hover:text-foreground" aria-label="Close benefit form" title="Close"><X size={18} /></button>
         </div>
         <form onSubmit={handleSubmit} className="p-5 space-y-4">
           <div>

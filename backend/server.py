@@ -1,19 +1,50 @@
+"""Twenty20 Wariyad API — PostgreSQL edition (SQLModel / SQLAlchemy async).
+
+Ported from the original MongoDB/motor implementation. Same routes, same request/
+response shapes, same auth/JWT/cookies/PDF/Excel/Twilio behavior. Only the data
+access layer changed: motor collections -> SQLModel async sessions.
+"""
 from dotenv import load_dotenv
 load_dotenv()
 
 from fastapi import FastAPI, APIRouter, HTTPException, Request, Depends, UploadFile, File
 from fastapi.responses import Response, StreamingResponse
 from starlette.middleware.cors import CORSMiddleware
-from motor.motor_asyncio import AsyncIOMotorClient
-from pydantic import BaseModel, BeforeValidator, EmailStr, field_validator
-from typing import Annotated, Optional, List
-from bson import ObjectId
+from pydantic import BaseModel, EmailStr, field_validator
+from typing import Optional, List
 from datetime import datetime, timezone, timedelta
-from pathlib import Path
-from fpdf import FPDF
 from collections import defaultdict
-import os, jwt, bcrypt, logging, io, pandas as pd, time
+from fpdf import FPDF
+from pathlib import Path
+import os, jwt, bcrypt, logging, io, time, uuid as _uuidlib, pandas as pd
 import qrcode
+
+# ── PDF fonts/logo (Latin + Malayalam fallback) ───────────────────────────────
+LOGO_WHITE = str(Path(__file__).parent / "assets" / "logo_white.png")
+FONT_DIR = Path(__file__).parent / "assets" / "fonts"
+
+def new_pdf(*args, **kwargs) -> FPDF:
+    """FPDF instance with Unicode fonts registered (Latin primary + Malayalam fallback)."""
+    pdf = FPDF(*args, **kwargs)
+    pdf.add_font("noto", "", str(FONT_DIR / "NotoSans-Regular.ttf"))
+    pdf.add_font("noto", "B", str(FONT_DIR / "NotoSans-Bold.ttf"))
+    pdf.add_font("noto", "I", str(FONT_DIR / "NotoSans-Italic.ttf"))
+    pdf.add_font("notoml", "", str(FONT_DIR / "NotoSansMalayalam-Regular.ttf"))
+    pdf.add_font("notoml", "B", str(FONT_DIR / "NotoSansMalayalam-Bold.ttf"))
+    pdf.set_fallback_fonts(["notoml"], exact_match=False)
+    return pdf
+
+from sqlalchemy import select, func, delete as sqldelete
+from sqlalchemy.ext.asyncio import AsyncSession
+from db import get_session, init_db, async_session_maker, engine
+from models import (
+    User, Member, Benefit, MedicalAid, DeathAssistance,
+    Cashbook, Committee, CommitteeHandover, Meeting, NotificationLog, AuditSignOff,
+    OrgSettings, MonthlyDues, Payment,
+)
+from ledger import (
+    month_index, resolve_rate, build_ledger, allocate_payment, _status as _ledger_status,
+)
 
 # Twilio (optional — graceful fallback if credentials not configured)
 try:
@@ -31,15 +62,8 @@ except Exception:
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
 
-# ── Database ─────────────────────────────────────────────────────────────────
-client = AsyncIOMotorClient(os.environ["MONGO_URL"])
-db = client[os.environ["DB_NAME"]]
-
 # ── Security constants ────────────────────────────────────────────────────────
-# Cookies: secure=True in prod; set COOKIE_SECURE=false only for local http dev
 COOKIE_SECURE = os.environ.get("COOKIE_SECURE", "true").lower() != "false"
-
-# Privileged roles that only super_admin can assign
 PRIVILEGED_ROLES = {"super_admin", "president", "auditor"}
 
 # ── JWT ───────────────────────────────────────────────────────────────────────
@@ -67,39 +91,37 @@ def hash_password(p: str) -> str:
 def verify_password(plain: str, hashed: str) -> bool:
     return bcrypt.checkpw(plain.encode(), hashed.encode())
 
-# ── PyObjectId ────────────────────────────────────────────────────────────────
-def validate_object_id(v):
-    if isinstance(v, ObjectId): return str(v)
-    if isinstance(v, str) and ObjectId.is_valid(v): return v
-    raise ValueError(f"Invalid ObjectId: {v}")
-
-PyObjectId = Annotated[str, BeforeValidator(validate_object_id)]
-
-def safe_oid(val: str) -> ObjectId:
-    """Convert a path/query param to ObjectId, raising 400 on bad input."""
-    if not ObjectId.is_valid(val):
+# ── ID helpers ────────────────────────────────────────────────────────────────
+def safe_id(val: str) -> str:
+    """Validate a UUID path/query param, raising 400 on bad input."""
+    try:
+        return str(_uuidlib.UUID(str(val)))
+    except (ValueError, AttributeError, TypeError):
         raise HTTPException(400, "Invalid ID format")
 
-def _member_owns(user: dict, member: dict) -> bool:
-    """True if `user` (role=member) is the member record `member`.
-    Matches on either the Mongo _id or the TW- member code, so the check
-    is robust to how the user account was linked."""
+def row_to_dict(obj) -> Optional[dict]:
+    """Serialize a SQLModel row to a plain dict (drops password_hash)."""
+    if obj is None:
+        return None
+    d = obj.model_dump()
+    d.pop("password_hash", None)
+    return d
+
+def _member_owns(user: dict, member: Optional["Member"]) -> bool:
+    """True if `user` (role=member) owns the member record (match on id or TW- code)."""
     if not member:
         return False
     uid = str(user.get("member_id") or "")
-    return uid in (str(member.get("_id", "")), str(member.get("member_id", "")))
+    return uid in (str(member.id), str(member.member_id))
 
-    return ObjectId(val)
-
-# ── Brute-force rate limiter (in-memory, 5 attempts / 15 min per email+IP) ───
+# ── Brute-force rate limiter (in-memory, 5 attempts / 15 min per email) ───
 _login_attempts: dict = defaultdict(list)
-_RATE_MAX    = 5
-_RATE_WINDOW = 900   # seconds
+_RATE_MAX = 5
+_RATE_WINDOW = 900
 
 def _check_rate_limit(email: str, ip: str):
-    # Use email only as key (IP alone is unreliable behind K8s ingress)
-    key  = email.lower()
-    now  = time.time()
+    key = email.lower()
+    now = time.time()
     hits = [t for t in _login_attempts[key] if now - t < _RATE_WINDOW]
     _login_attempts[key] = hits
     if len(hits) >= _RATE_MAX:
@@ -107,72 +129,131 @@ def _check_rate_limit(email: str, ip: str):
     _login_attempts[key].append(now)
 
 def _reset_rate_limit(email: str, ip: str):
-    key = email.lower()
-    _login_attempts.pop(key, None)
+    _login_attempts.pop(email.lower(), None)
 
 # ── Auth helpers ──────────────────────────────────────────────────────────────
 async def get_current_user(request: Request) -> dict:
     token = request.cookies.get("access_token")
     if not token:
         auth = request.headers.get("Authorization", "")
-        if auth.startswith("Bearer "): token = auth[7:]
+        if auth.startswith("Bearer "):
+            token = auth[7:]
     if not token:
         raise HTTPException(401, "Not authenticated")
     try:
         payload = jwt.decode(token, get_jwt_secret(), algorithms=[JWT_ALGORITHM])
         if payload.get("type") != "access":
             raise HTTPException(401, "Invalid token type")
-        user = await db.users.find_one({"_id": ObjectId(payload["sub"])})
-        if not user:
-            raise HTTPException(401, "User not found")
-        if not user.get("is_active", True):
-            raise HTTPException(403, "Account is disabled")
-        user["id"] = str(user.pop("_id"))
-        user.pop("password_hash", None)
-        return user
     except jwt.ExpiredSignatureError:
         raise HTTPException(401, "Token expired")
     except jwt.InvalidTokenError:
         raise HTTPException(401, "Invalid token")
+    async with async_session_maker() as session:
+        user = await session.get(User, payload["sub"])
+    if not user:
+        raise HTTPException(401, "User not found")
+    if user.is_active is False:
+        raise HTTPException(403, "Account is disabled")
+    d = user.model_dump()
+    d.pop("password_hash", None)
+    return d
 
 def require_roles(*roles):
-    async def checker(user: dict = Depends(get_current_user)):
+    async def checker(user: dict = Depends(get_current_user)) -> dict:
         if user.get("role") not in roles:
             raise HTTPException(403, "Insufficient permissions")
         return user
     return checker
 
-# ── Serializers ───────────────────────────────────────────────────────────────
-def s(doc: dict) -> dict:
-    if doc is None: return None
-    doc["id"] = str(doc.pop("_id"))
-    return doc
-
-def ss(docs) -> list:
-    return [s(d) for d in docs]
 
 # ── ID generators ─────────────────────────────────────────────────────────────
-async def next_member_id():
-    # Use max existing ID to avoid collisions after deletions
-    last = await db.members.find_one({}, sort=[("member_id", -1)])
-    if last and last.get("member_id"):
+async def next_member_id(session: AsyncSession) -> str:
+    res = await session.execute(select(Member.member_id).order_by(Member.member_id.desc()).limit(1))
+    last = res.scalar_one_or_none()
+    if last:
         try:
-            num = int(last["member_id"].split("-")[-1])
-            return f"TW-{(num+1):03d}"
+            return f"TW-{(int(last.split('-')[-1]) + 1):03d}"
         except (ValueError, IndexError):
             pass
     return "TW-001"
 
-async def next_receipt():
+async def next_receipt(session: AsyncSession) -> str:
     yr = datetime.now().year
-    count = await db.contributions.count_documents({"year": yr})
-    return f"RCP-{yr}-{(count+1):04d}"
+    res = await session.execute(select(func.count()).select_from(Payment).where(Payment.year == yr))
+    return f"RCP-{yr}-{(res.scalar_one() + 1):04d}"
 
-async def next_voucher():
-    count = await db.cashbook.count_documents({})
-    return f"VCH-{datetime.now().year}-{(count+1):04d}"
+async def next_voucher(session: AsyncSession) -> str:
+    res = await session.execute(select(func.count()).select_from(Cashbook))
+    return f"VCH-{datetime.now().year}-{(res.scalar_one() + 1):04d}"
 
-# ── Pydantic Models ───────────────────────────────────────────────────────────
+
+# ── LEDGER SERVICE (DB-backed; math lives in ledger.py) ───────────────────────
+async def get_settings(session: AsyncSession) -> OrgSettings:
+    """Return the single org_settings row, creating defaults on first use."""
+    res = await session.execute(select(OrgSettings).limit(1))
+    s = res.scalar_one_or_none()
+    if not s:
+        s = OrgSettings()
+        session.add(s)
+        await session.commit()
+        await session.refresh(s)
+    return s
+
+
+def _ym_parse(s: Optional[str], default=None):
+    """Parse 'YYYY-MM' or 'YYYY-MM-DD' -> (year, month). None-safe."""
+    if not s:
+        return default
+    parts = str(s).split("-")
+    try:
+        return (int(parts[0]), int(parts[1]))
+    except (IndexError, ValueError):
+        return default
+
+
+async def member_ledger(session: AsyncSession, member: Member, settings: OrgSettings,
+                        through_year: int, through_month: int):
+    """Build a member's full month-by-month ledger using stored dues+payments."""
+    join = _ym_parse(member.joining_date, (datetime.now().year, datetime.now().month))
+    start = _ym_parse(member.ledger_start, join)
+    inactive = _ym_parse(member.inactive_from, None)
+    # paid-per-month from MonthlyDues; the synthetic (year=0,month=0) row is the
+    # paydown applied to the member's opening pending balance.
+    dres = await session.execute(select(MonthlyDues).where(MonthlyDues.member_id == member.id))
+    all_dues = dres.scalars().all()
+    paid_by_month = {(d.year, d.month): d.paid for d in all_dues if not (d.year == 0 and d.month == 0)}
+    opening_paid = sum(d.paid for d in all_dues if d.year == 0 and d.month == 0)
+    # opening balance, reduced by any paydown already applied to opening pending
+    eff_opening = int(member.opening_balance or 0) + int(opening_paid)
+    rows = build_ledger(
+        join[0], join[1], paid_by_month,
+        standard_rate=int(settings.standard_rate),
+        intro_rate=int(settings.intro_rate),
+        intro_months=int(settings.intro_months),
+        member_intro_rate=(int(member.intro_rate) if member.intro_rate is not None else None),
+        through_year=through_year, through_month=through_month,
+        opening_balance=eff_opening,
+        inactive_from=inactive, start_year=start[0], start_month=start[1],
+    )
+    return rows
+
+
+async def member_balance(session: AsyncSession, member: Member, settings: OrgSettings):
+    """Current balance (− pending / + advance) and status for a member, as of now."""
+    now = datetime.now()
+    rows = await member_ledger(session, member, settings, now.year, now.month)
+    if not rows:
+        return {"balance": 0, "status": "Up to Date", "outstanding": 0, "advance": 0}
+    last = rows[-1]
+    return {
+        "balance": last.balance,
+        "status": last.status,
+        "outstanding": max(0, -last.balance),
+        "advance": max(0, last.balance),
+    }
+
+
+# ── Pydantic request models ───────────────────────────────────────────────────
 class LoginReq(BaseModel):
     email: EmailStr
     password: str
@@ -183,7 +264,6 @@ class UserCreate(BaseModel):
     password: str
     role: str = "member"
     member_id: Optional[str] = None
-
     @field_validator("password")
     @classmethod
     def password_min_length(cls, v: str) -> str:
@@ -203,6 +283,9 @@ class MemberCreate(BaseModel):
     joining_date: str
     status: str = "active"
     aadhaar: Optional[str] = None
+    intro_rate: Optional[float] = None        # first-year monthly rate (defaults to org intro rate)
+    opening_balance: float = 0.0              # − pending / + advance carried in before ledger_start
+    ledger_start: Optional[str] = None        # "YYYY-MM" the opening balance applies to
 
 class MemberUpdate(BaseModel):
     name: Optional[str] = None
@@ -210,13 +293,22 @@ class MemberUpdate(BaseModel):
     address: Optional[str] = None
     status: Optional[str] = None
     aadhaar: Optional[str] = None
+    intro_rate: Optional[float] = None
+    opening_balance: Optional[float] = None
+    ledger_start: Optional[str] = None
+    inactive_from: Optional[str] = None       # "YYYY-MM" — stop accruing dues
 
-class ContribCreate(BaseModel):
+class PaymentCreate(BaseModel):
     member_id: str
+    amount: float                             # may be partial, exact, or over the month's rate
+    payment_method: str
     month: int
     year: int
-    amount: float
-    payment_method: str
+
+class SettingsUpdate(BaseModel):
+    standard_rate: Optional[float] = None
+    intro_rate: Optional[float] = None
+    intro_months: Optional[int] = None
 
 class BenefitCreate(BaseModel):
     member_id: str
@@ -303,76 +395,61 @@ class NotificationSendReq(BaseModel):
     year: int
     message: Optional[str] = None
 
+
 # ── App ───────────────────────────────────────────────────────────────────────
 app = FastAPI(title="Twenty20 Wariyad API")
 api_router = APIRouter(prefix="/api")
 
-LOGO_WHITE = str(Path(__file__).parent / "assets" / "logo_white.png")
-FONT_DIR = Path(__file__).parent / "assets" / "fonts"
-
-
-def new_pdf(*args, **kwargs) -> FPDF:
-    """FPDF instance with Unicode fonts registered (Latin primary + Malayalam fallback)."""
-    pdf = FPDF(*args, **kwargs)
-    pdf.add_font("noto", "", str(FONT_DIR / "NotoSans-Regular.ttf"))
-    pdf.add_font("noto", "B", str(FONT_DIR / "NotoSans-Bold.ttf"))
-    pdf.add_font("noto", "I", str(FONT_DIR / "NotoSans-Italic.ttf"))
-    pdf.add_font("notoml", "", str(FONT_DIR / "NotoSansMalayalam-Regular.ttf"))
-    pdf.add_font("notoml", "B", str(FONT_DIR / "NotoSansMalayalam-Bold.ttf"))
-    pdf.set_fallback_fonts(["notoml"], exact_match=False)
-    return pdf
-
-# Support comma-separated origins (e.g. staging + prod)
-_origins_raw = os.environ.get("FRONTEND_URL", "http://localhost:3000")
-FRONTEND_ORIGINS = [o.strip() for o in _origins_raw.split(",") if o.strip()]
-
+FRONTEND_URL = os.environ.get("FRONTEND_URL", "http://localhost:3000")
+ALLOWED_ORIGINS = [o.strip() for o in FRONTEND_URL.split(",") if o.strip()]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=FRONTEND_ORIGINS,
+    allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-    allow_headers=["Content-Type", "Authorization", "Cookie"],
+    allow_headers=["Authorization", "Content-Type"],
 )
+
+def set_auth_cookies(response: Response, at: str, rt: str):
+    response.set_cookie("access_token", at, httponly=True, secure=COOKIE_SECURE, samesite="lax", max_age=28800)
+    response.set_cookie("refresh_token", rt, httponly=True, secure=COOKIE_SECURE, samesite="lax", max_age=604800)
+
 
 # ── AUTH ──────────────────────────────────────────────────────────────────────
 @api_router.post("/auth/register")
-async def register(data: UserCreate, response: Response):
+async def register(data: UserCreate, response: Response, session: AsyncSession = Depends(get_session)):
     email = data.email.lower().strip()
-    if await db.users.find_one({"email": email}):
+    existing = await session.execute(select(User).where(User.email == email))
+    if existing.scalar_one_or_none():
         raise HTTPException(400, "Email already registered")
-    uid = (await db.users.insert_one({
-        "name": data.name, "email": email,
-        "password_hash": hash_password(data.password),
-        "role": "member",          # registration always creates a plain member
-        "member_id": data.member_id,
-        "is_active": True,
-        "created_at": datetime.now(timezone.utc).isoformat()
-    })).inserted_id
-    user_id = str(uid)
-    at = create_access_token(user_id, email)
-    rt = create_refresh_token(user_id)
-    response.set_cookie("access_token", at, httponly=True, secure=COOKIE_SECURE, samesite="lax", max_age=28800)
-    response.set_cookie("refresh_token", rt, httponly=True, secure=COOKIE_SECURE, samesite="lax", max_age=604800)
-    return {"id": user_id, "name": data.name, "email": email, "role": "member"}
+    # Self-registration always creates a plain member (no privileged role from client).
+    user = User(name=data.name, email=email, password_hash=hash_password(data.password),
+                role="member", member_id=None, is_active=True)
+    session.add(user)
+    await session.commit()
+    await session.refresh(user)
+    at = create_access_token(user.id, email)
+    rt = create_refresh_token(user.id)
+    set_auth_cookies(response, at, rt)
+    return {"id": user.id, "name": user.name, "email": email, "role": "member"}
 
 @api_router.post("/auth/login")
-async def login(data: LoginReq, request: Request, response: Response):
-    client_ip = request.client.host if request.client else "unknown"
+async def login(data: LoginReq, request: Request, response: Response, session: AsyncSession = Depends(get_session)):
     email = data.email.lower().strip()
-    _check_rate_limit(email, client_ip)
-    user = await db.users.find_one({"email": email})
-    if not user or not verify_password(data.password, user["password_hash"]):
+    ip = request.client.host if request.client else ""
+    _check_rate_limit(email, ip)
+    res = await session.execute(select(User).where(User.email == email))
+    user = res.scalar_one_or_none()
+    if not user or not verify_password(data.password, user.password_hash):
         raise HTTPException(401, "Invalid email or password")
-    if not user.get("is_active", True):
+    if user.is_active is False:
         raise HTTPException(403, "Account is disabled")
-    _reset_rate_limit(email, client_ip)
-    user_id = str(user["_id"])
-    at = create_access_token(user_id, email)
-    rt = create_refresh_token(user_id)
-    response.set_cookie("access_token", at, httponly=True, secure=COOKIE_SECURE, samesite="lax", max_age=28800)
-    response.set_cookie("refresh_token", rt, httponly=True, secure=COOKIE_SECURE, samesite="lax", max_age=604800)
-    return {"id": user_id, "name": user["name"], "email": user["email"],
-            "role": user["role"], "member_id": user.get("member_id")}
+    _reset_rate_limit(email, ip)
+    at = create_access_token(user.id, email)
+    rt = create_refresh_token(user.id)
+    set_auth_cookies(response, at, rt)
+    return {"id": user.id, "name": user.name, "email": user.email,
+            "role": user.role, "member_id": user.member_id}
 
 @api_router.post("/auth/logout")
 async def logout(response: Response):
@@ -384,63 +461,89 @@ async def logout(response: Response):
 async def me(user: dict = Depends(get_current_user)):
     return user
 
+
 # ── USERS ─────────────────────────────────────────────────────────────────────
 @api_router.get("/users")
-async def list_users(user: dict = Depends(require_roles("super_admin", "president", "secretary"))):
-    docs = await db.users.find({}, {"password_hash": 0}).to_list(500)
-    return ss(docs)
+async def list_users(user: dict = Depends(require_roles("super_admin", "president", "secretary")),
+                     session: AsyncSession = Depends(get_session)):
+    res = await session.execute(select(User))
+    return [row_to_dict(u) for u in res.scalars().all()]
 
 @api_router.post("/users")
-async def create_user(data: UserCreate, user: dict = Depends(require_roles("super_admin", "secretary"))):
-    if user["role"] != "super_admin" and data.role in PRIVILEGED_ROLES:
-        raise HTTPException(403, "Only super_admin can assign privileged roles")
+async def create_user(data: UserCreate, user: dict = Depends(require_roles("super_admin", "secretary")),
+                      session: AsyncSession = Depends(get_session)):
     email = data.email.lower().strip()
-    if await db.users.find_one({"email": email}):
+    if data.role in PRIVILEGED_ROLES and user["role"] != "super_admin":
+        raise HTTPException(403, "Only super_admin can assign privileged roles")
+    existing = await session.execute(select(User).where(User.email == email))
+    if existing.scalar_one_or_none():
         raise HTTPException(400, "Email already registered")
-    uid = (await db.users.insert_one({
-        "name": data.name, "email": email,
-        "password_hash": hash_password(data.password),
-        "role": data.role, "member_id": data.member_id,
-        "is_active": True, "created_at": datetime.now(timezone.utc).isoformat()
-    })).inserted_id
-    return {"id": str(uid), "name": data.name, "email": email, "role": data.role}
+    u = User(name=data.name, email=email, password_hash=hash_password(data.password),
+             role=data.role, member_id=data.member_id, is_active=True)
+    session.add(u)
+    await session.commit()
+    await session.refresh(u)
+    return {"id": u.id, "name": u.name, "email": email, "role": u.role}
 
 @api_router.put("/users/{uid}")
-async def update_user(uid: str, data: UserUpdate, user: dict = Depends(require_roles("super_admin"))):
-    upd = {k: v for k, v in data.model_dump().items() if v is not None}
-    await db.users.update_one({"_id": safe_oid(uid)}, {"$set": upd})
-    doc = await db.users.find_one({"_id": safe_oid(uid)}, {"password_hash": 0})
-    return s(doc)
+async def update_user(uid: str, data: UserUpdate, user: dict = Depends(require_roles("super_admin")),
+                      session: AsyncSession = Depends(get_session)):
+    u = await session.get(User, safe_id(uid))
+    if not u:
+        raise HTTPException(404, "User not found")
+    for k, v in data.model_dump().items():
+        if v is not None:
+            setattr(u, k, v)
+    await session.commit()
+    await session.refresh(u)
+    return row_to_dict(u)
 
 @api_router.delete("/users/{uid}")
-async def delete_user(uid: str, user: dict = Depends(require_roles("super_admin"))):
-    if user["id"] == uid:
+async def delete_user(uid: str, user: dict = Depends(require_roles("super_admin")),
+                      session: AsyncSession = Depends(get_session)):
+    uid = safe_id(uid)
+    if uid == user["id"]:
         raise HTTPException(400, "Cannot delete your own account")
-    await db.users.delete_one({"_id": safe_oid(uid)})
+    u = await session.get(User, uid)
+    if u:
+        await session.delete(u)
+        await session.commit()
     return {"message": "User deleted"}
 
-def _mask_aadhaar(doc: dict, role: str) -> dict:
-    """Mask Aadhaar for all non-super_admin roles."""
-    if doc and doc.get("aadhaar") and role != "super_admin":
-        raw = doc["aadhaar"].replace("-", "").replace(" ", "")
-        doc["aadhaar"] = "XXXX-XXXX-" + (raw[-4:] if len(raw) >= 4 else "****")
-    return doc
 
 # ── MEMBERS ───────────────────────────────────────────────────────────────────
+def _mask_aadhaar(d: Optional[dict], role: str) -> Optional[dict]:
+    """Mask Aadhaar for all non-super_admin roles."""
+    if d and d.get("aadhaar") and role != "super_admin":
+        raw = d["aadhaar"].replace("-", "").replace(" ", "")
+        d["aadhaar"] = "XXXX-XXXX-" + (raw[-4:] if len(raw) >= 4 else "****")
+    return d
+
 @api_router.get("/members")
-async def list_members(user: dict = Depends(get_current_user)):
-    docs = await db.members.find().sort("created_at", -1).to_list(500)
-    return [_mask_aadhaar(s(d), user["role"]) for d in docs]
+async def list_members(with_balance: bool = True, user: dict = Depends(get_current_user),
+                       session: AsyncSession = Depends(get_session)):
+    res = await session.execute(select(Member).order_by(Member.created_at.desc()))
+    members = res.scalars().all()
+    settings = await get_settings(session) if with_balance else None
+    out = []
+    for m in members:
+        d = _mask_aadhaar(m.model_dump(), user["role"])
+        if with_balance:
+            bal = await member_balance(session, m, settings)
+            d.update({"balance": bal["balance"], "balance_status": bal["status"],
+                      "outstanding": bal["outstanding"], "advance": bal["advance"]})
+        out.append(d)
+    return out
 
 @api_router.post("/members")
-async def create_member(data: MemberCreate, user: dict = Depends(require_roles("super_admin", "secretary", "treasurer"))):
-    mid = await next_member_id()
-    doc = {**data.model_dump(), "member_id": mid,
-           "created_at": datetime.now(timezone.utc).isoformat()}
-    result = await db.members.insert_one(doc)
-    doc["id"] = str(result.inserted_id)
-    doc.pop("_id", None)
-    return doc
+async def create_member(data: MemberCreate, user: dict = Depends(require_roles("super_admin", "secretary", "treasurer")),
+                        session: AsyncSession = Depends(get_session)):
+    mid = await next_member_id(session)
+    m = Member(member_id=mid, **data.model_dump())
+    session.add(m)
+    await session.commit()
+    await session.refresh(m)
+    return m.model_dump()
 
 # ── BULK IMPORT (must be before /{mid} to avoid routing conflict) ─────────────
 @api_router.get("/members/import-template")
@@ -451,14 +554,10 @@ async def import_template():
         "Suhail Ahmed,9876543211,\"Near Mosque Wariyad\",2024-02-20,active,123456789012\n"
         "Fathima Beevi,9876543212,\"Colony Road Wariyad\",2024-03-10,active,\n"
     )
-    return Response(
-        content=csv_content,
-        media_type="text/csv",
-        headers={"Content-Disposition": "attachment; filename=members_template.csv"}
-    )
+    return Response(content=csv_content, media_type="text/csv",
+                    headers={"Content-Disposition": "attachment; filename=members_template.csv"})
 
 def build_member_qr_card(member: dict) -> bytes:
-    """Generate a PDF ID card with embedded QR code for a member."""
     qr_data = (
         f"Twenty20 Charity Group Wariyad\n"
         f"Name: {member.get('name','')}\n"
@@ -466,624 +565,73 @@ def build_member_qr_card(member: dict) -> bytes:
         f"Mobile: {member.get('mobile','')}"
     )
     qr = qrcode.QRCode(version=2, box_size=6, border=2)
-    qr.add_data(qr_data)
-    qr.make(fit=True)
+    qr.add_data(qr_data); qr.make(fit=True)
     qr_img = qr.make_image(fill_color="#166534", back_color="white")
-    qr_buf = io.BytesIO()
-    qr_img.save(qr_buf, format="PNG")
-    qr_buf.seek(0)
+    qr_buf = io.BytesIO(); qr_img.save(qr_buf, format="PNG"); qr_buf.seek(0)
 
-    pdf = new_pdf(orientation="L", format=(54, 86))  # Landscape credit-card size (mm)
-    pdf.set_margins(0, 0, 0)
-    pdf.add_page()
-
-    # Green header band
-    pdf.set_fill_color(22, 101, 52)
-    pdf.rect(0, 0, 86, 14, "F")
-    pdf.image(LOGO_WHITE, x=2, y=2, h=10)
-    pdf.set_text_color(255, 255, 255)
-    pdf.set_font("noto", "B", 7)
-    pdf.set_y(2)
+    pdf = new_pdf(orientation="L", format=(54, 86))
+    pdf.set_margins(0, 0, 0); pdf.add_page()
+    pdf.set_fill_color(22, 101, 52); pdf.rect(0, 0, 86, 14, "F")
+    try: pdf.image(LOGO_WHITE, x=2, y=2, h=10)
+    except Exception: pass
+    pdf.set_text_color(255, 255, 255); pdf.set_font("noto", "B", 7); pdf.set_y(2)
     pdf.cell(0, 5, "TWENTY20 CHARITY GROUP  WARIYAD", align="C", ln=True)
-    pdf.set_font("noto", "", 6)
-    pdf.cell(0, 4, "Verified Member Card", align="C", ln=True)
-
-    # Left side — member details
-    pdf.set_text_color(28, 25, 23)
-    pdf.set_y(17)
-    pdf.set_x(3)
-    pdf.set_font("noto", "B", 11)
-    pdf.cell(48, 7, member.get("name", ""), ln=True)
-    pdf.set_x(3)
-    pdf.set_font("noto", "B", 8)
-    pdf.set_text_color(22, 101, 52)
+    pdf.set_font("noto", "", 6); pdf.cell(0, 4, "Verified Member Card", align="C", ln=True)
+    pdf.set_text_color(28, 25, 23); pdf.set_y(17); pdf.set_x(3)
+    pdf.set_font("noto", "B", 11); pdf.cell(48, 7, member.get("name", ""), ln=True)
+    pdf.set_x(3); pdf.set_font("noto", "B", 8); pdf.set_text_color(22, 101, 52)
     pdf.cell(48, 5, member.get("member_id", ""), ln=True)
-    pdf.set_x(3)
-    pdf.set_text_color(80, 80, 80)
-    pdf.set_font("noto", "", 7)
+    pdf.set_x(3); pdf.set_text_color(80, 80, 80); pdf.set_font("noto", "", 7)
     pdf.cell(48, 4, f"Mobile: {member.get('mobile', '-')}", ln=True)
-    pdf.set_x(3)
-    pdf.cell(48, 4, f"Joined: {member.get('joining_date', '-')}", ln=True)
-
-    # Status badge
-    pdf.set_x(3)
-    pdf.set_y(42)
-    pdf.set_fill_color(220, 252, 231)
-    pdf.set_draw_color(22, 101, 52)
-    pdf.set_text_color(22, 101, 52)
-    pdf.set_font("noto", "B", 6)
+    pdf.set_x(3); pdf.cell(48, 4, f"Joined: {member.get('joining_date', '-')}", ln=True)
+    pdf.set_x(3); pdf.set_y(42); pdf.set_fill_color(220, 252, 231)
+    pdf.set_draw_color(22, 101, 52); pdf.set_text_color(22, 101, 52); pdf.set_font("noto", "B", 6)
     pdf.cell(20, 5, "  ACTIVE", border=1, fill=True, align="C")
-
-    # QR code on right
     pdf.image(qr_buf, x=54, y=14, w=29, h=29)
-
-    # Footer
-    pdf.set_fill_color(22, 101, 52)
-    pdf.rect(0, 49, 86, 5, "F")
-    pdf.set_text_color(255, 255, 255)
-    pdf.set_font("noto", "", 5)
-    pdf.set_y(50)
+    pdf.set_fill_color(22, 101, 52); pdf.rect(0, 49, 86, 5, "F")
+    pdf.set_text_color(255, 255, 255); pdf.set_font("noto", "", 5); pdf.set_y(50)
     pdf.cell(0, 3, "This card is the property of Twenty20 Charity Group Wariyad", align="C")
-
     return bytes(pdf.output())
-
 
 @api_router.get("/members/{mid}/qr-card")
-async def download_member_qr_card(mid: str, user: dict = Depends(get_current_user)):
-    member = await db.members.find_one({"_id": safe_oid(mid)})
+async def download_member_qr_card(mid: str, user: dict = Depends(get_current_user),
+                                  session: AsyncSession = Depends(get_session)):
+    member = await session.get(Member, safe_id(mid))
     if not member:
         raise HTTPException(404, "Member not found")
-    # Members can only download their own QR card (match on _id or TW- code)
     if user["role"] == "member" and not _member_owns(user, member):
         raise HTTPException(403, "Access denied")
-    pdf_bytes = build_member_qr_card(member)
-    name_slug = member.get("name", "member").replace(" ", "_")
-    name_slug = name_slug.encode("ascii", "ignore").decode() or member.get("member_id", "member")
-    return StreamingResponse(
-        io.BytesIO(pdf_bytes),
-        media_type="application/pdf",
-        headers={"Content-Disposition": f"attachment; filename=MemberCard_{name_slug}.pdf"}
-    )
+    pdf_bytes = build_member_qr_card(member.model_dump())
+    name_slug = (member.name or "member").replace(" ", "_").encode("ascii", "ignore").decode() or member.member_id
+    return StreamingResponse(io.BytesIO(pdf_bytes), media_type="application/pdf",
+        headers={"Content-Disposition": f"attachment; filename=MemberCard_{name_slug}.pdf"})
 
 @api_router.put("/members/{mid}")
-async def update_member(mid: str, data: MemberUpdate, user: dict = Depends(require_roles("super_admin", "secretary", "treasurer"))):
-    upd = {k: v for k, v in data.model_dump().items() if v is not None}
-    await db.members.update_one({"_id": safe_oid(mid)}, {"$set": upd})
-    return _mask_aadhaar(s(await db.members.find_one({"_id": safe_oid(mid)})), user["role"])
+async def update_member(mid: str, data: MemberUpdate, user: dict = Depends(require_roles("super_admin", "secretary", "treasurer")),
+                        session: AsyncSession = Depends(get_session)):
+    m = await session.get(Member, safe_id(mid))
+    if not m:
+        raise HTTPException(404, "Member not found")
+    for k, v in data.model_dump().items():
+        if v is not None:
+            setattr(m, k, v)
+    await session.commit()
+    await session.refresh(m)
+    return _mask_aadhaar(m.model_dump(), user["role"])
 
 @api_router.delete("/members/{mid}")
-async def delete_member(mid: str, user: dict = Depends(require_roles("super_admin"))):
-    await db.members.delete_one({"_id": safe_oid(mid)})
+async def delete_member(mid: str, user: dict = Depends(require_roles("super_admin")),
+                        session: AsyncSession = Depends(get_session)):
+    m = await session.get(Member, safe_id(mid))
+    if m:
+        await session.delete(m)
+        await session.commit()
     return {"message": "Member deleted"}
 
-# ── CONTRIBUTIONS ─────────────────────────────────────────────────────────────
-@api_router.get("/contributions")
-async def list_contributions(
-    member_id: Optional[str] = None, year: Optional[int] = None,
-    month: Optional[int] = None, user: dict = Depends(get_current_user)
-):
-    q = {}
-    if member_id: q["member_id"] = member_id
-    elif user["role"] == "member" and user.get("member_id"):
-        q["member_id"] = user["member_id"]
-    if year: q["year"] = year
-    if month: q["month"] = month
-    docs = await db.contributions.find(q).sort("paid_at", -1).to_list(2000)
-    return ss(docs)
-
-@api_router.post("/contributions")
-async def record_contribution(data: ContribCreate, user: dict = Depends(require_roles("super_admin", "treasurer"))):
-    if await db.contributions.find_one({"member_id": data.member_id, "month": data.month, "year": data.year}):
-        raise HTTPException(400, "Contribution already recorded for this month")
-    receipt = await next_receipt()
-    doc = {**data.model_dump(), "receipt_number": receipt,
-           "recorded_by": user["id"], "paid_at": datetime.now(timezone.utc).isoformat()}
-    result = await db.contributions.insert_one(doc)
-    cid = str(result.inserted_id)
-    # Auto cashbook credit
-    member = await db.members.find_one({"_id": safe_oid(data.member_id)}) if ObjectId.is_valid(data.member_id) else None
-    await db.cashbook.insert_one({
-        "entry_type": "credit", "category": "contribution",
-        "description": f"Monthly contribution - {data.year}/{data.month:02d} ({member['name'] if member else 'Unknown'})",
-        "amount": data.amount, "date": datetime.now(timezone.utc).date().isoformat(),
-        "reference_id": cid, "voucher_number": await next_voucher(),
-        "recorded_by": user["id"], "created_at": datetime.now(timezone.utc).isoformat()
-    })
-    doc["id"] = cid
-    doc.pop("_id", None)
-    return doc
-
-@api_router.delete("/contributions/{cid}")
-async def delete_contribution(cid: str, user: dict = Depends(require_roles("super_admin", "treasurer"))):
-    await db.contributions.delete_one({"_id": safe_oid(cid)})
-    return {"message": "Deleted"}
-
-@api_router.get("/contributions/status/{year}/{month}")
-async def contribution_status(year: int, month: int, user: dict = Depends(get_current_user)):
-    members = await db.members.find({"status": "active"}).to_list(500)
-    contribs = await db.contributions.find({"year": year, "month": month}).to_list(500)
-    paid_map = {c["member_id"]: c for c in contribs}
-    result = []
-    for m in members:
-        mid = str(m["_id"])
-        c = paid_map.get(mid)
-        result.append({
-            "member_id": mid, "member_name": m["name"],
-            "member_code": m["member_id"],
-            "status": "paid" if c else "pending",
-            "amount": c["amount"] if c else None,
-            "receipt_number": c["receipt_number"] if c else None,
-            "payment_method": c["payment_method"] if c else None,
-            "contribution_id": str(c["_id"]) if c else None
-        })
-    return result
-
-# ── BENEFITS ──────────────────────────────────────────────────────────────────
-BENEFIT_AMOUNTS = {"marriage": 5000, "housewarming": 3000}
-
-@api_router.get("/benefits")
-async def list_benefits(user: dict = Depends(get_current_user)):
-    q = {}
-    if user["role"] == "member" and user.get("member_id"):
-        q["member_id"] = user["member_id"]
-    docs = await db.benefits.find(q).sort("created_at", -1).to_list(500)
-    return ss(docs)
-
-@api_router.post("/benefits")
-async def apply_benefit(data: BenefitCreate, user: dict = Depends(get_current_user)):
-    if not ObjectId.is_valid(data.member_id):
-        raise HTTPException(400, "Invalid member ID")
-    member = await db.members.find_one({"_id": ObjectId(data.member_id)})
-    if not member: raise HTTPException(404, "Member not found")
-    if member["status"] != "active": raise HTTPException(400, "Member is not active")
-    existing = await db.benefits.find_one({"member_id": data.member_id,
-        "benefit_type": data.benefit_type, "status": {"$nin": ["rejected"]}})
-    if existing: raise HTTPException(400, f"{data.benefit_type.capitalize()} benefit already applied")
-    doc = {**data.model_dump(), "member_name": member["name"],
-           "amount": BENEFIT_AMOUNTS.get(data.benefit_type, 0),
-           "status": "pending", "applied_by": user["id"],
-           "created_at": datetime.now(timezone.utc).isoformat()}
-    result = await db.benefits.insert_one(doc)
-    doc["id"] = str(result.inserted_id)
-    doc.pop("_id", None)
-    return doc
-
-@api_router.put("/benefits/{bid}/status")
-async def update_benefit_status(bid: str, data: StatusUpdate, user: dict = Depends(get_current_user)):
-    upd: dict = {"status": data.status}
-    if data.notes: upd["notes"] = data.notes
-    now = datetime.now(timezone.utc).isoformat()
-    st = data.status
-    if st == "secretary_verified":
-        if user["role"] not in ["super_admin", "secretary"]: raise HTTPException(403, "Secretary only")
-        upd.update({"secretary_verified_by": user["id"], "secretary_verified_at": now})
-    elif st == "committee_approved":
-        if user["role"] not in ["super_admin", "president", "committee_member"]: raise HTTPException(403, "Committee only")
-        upd.update({"committee_approved_by": user["id"], "committee_approved_at": now})
-    elif st == "paid":
-        if user["role"] not in ["super_admin", "treasurer"]: raise HTTPException(403, "Treasurer only")
-        upd.update({"paid_by": user["id"], "paid_at": now})
-        benefit = await db.benefits.find_one({"_id": safe_oid(bid)})
-        if benefit:
-            await db.cashbook.insert_one({
-                "entry_type": "debit",
-                "category": f"{benefit['benefit_type']}_benefit",
-                "description": f"{benefit['benefit_type'].capitalize()} benefit - {benefit['member_name']}",
-                "amount": benefit["amount"], "date": datetime.now(timezone.utc).date().isoformat(),
-                "reference_id": bid, "voucher_number": await next_voucher(),
-                "recorded_by": user["id"], "created_at": now
-            })
-    elif st == "rejected":
-        upd.update({"rejected_by": user["id"], "rejected_at": now})
-    await db.benefits.update_one({"_id": safe_oid(bid)}, {"$set": upd})
-    return s(await db.benefits.find_one({"_id": safe_oid(bid)}))
-
-# ── MEDICAL AID ───────────────────────────────────────────────────────────────
-@api_router.get("/medical-aid")
-async def list_medical_aid(user: dict = Depends(get_current_user)):
-    docs = await db.medical_aid.find().sort("created_at", -1).to_list(500)
-    return ss(docs)
-
-@api_router.post("/medical-aid")
-async def apply_medical_aid(data: MedicalAidCreate, user: dict = Depends(get_current_user)):
-    doc = {**data.model_dump(), "status": "pending",
-           "applied_by": user["id"], "created_at": datetime.now(timezone.utc).isoformat()}
-    result = await db.medical_aid.insert_one(doc)
-    doc["id"] = str(result.inserted_id)
-    doc.pop("_id", None)
-    return doc
-
-@api_router.put("/medical-aid/{aid_id}")
-async def update_medical_aid(aid_id: str, data: MedicalAidUpdate, user: dict = Depends(get_current_user)):
-    upd = {k: v for k, v in data.model_dump().items() if v is not None}
-    now = datetime.now(timezone.utc).isoformat()
-    if data.status == "approved":
-        upd.update({"approved_by": user["id"], "approved_at": now})
-    elif data.status == "paid":
-        aid = await db.medical_aid.find_one({"_id": safe_oid(aid_id)})
-        if aid:
-            await db.cashbook.insert_one({
-                "entry_type": "debit", "category": "medical_aid",
-                "description": f"Medical aid - {aid['applicant_name']}",
-                "amount": aid.get("recommended_amount") or aid.get("estimated_expense", 0),
-                "date": datetime.now(timezone.utc).date().isoformat(),
-                "reference_id": aid_id, "voucher_number": await next_voucher(),
-                "recorded_by": user["id"], "created_at": now
-            })
-        upd.update({"paid_by": user["id"], "paid_at": now})
-    await db.medical_aid.update_one({"_id": safe_oid(aid_id)}, {"$set": upd})
-    return s(await db.medical_aid.find_one({"_id": safe_oid(aid_id)}))
-
-@api_router.delete("/medical-aid/{aid_id}")
-async def delete_medical_aid(aid_id: str, user: dict = Depends(require_roles("super_admin"))):
-    await db.medical_aid.delete_one({"_id": safe_oid(aid_id)})
-    return {"message": "Deleted"}
-
-# ── DEATH ASSISTANCE ──────────────────────────────────────────────────────────
-@api_router.get("/death-assistance")
-async def list_death_assistance(user: dict = Depends(get_current_user)):
-    docs = await db.death_assistance.find().sort("created_at", -1).to_list(500)
-    return ss(docs)
-
-@api_router.post("/death-assistance")
-async def create_death_assistance(data: DeathCreate, user: dict = Depends(get_current_user)):
-    doc = {**data.model_dump(), "status": "pending",
-           "created_by": user["id"], "created_at": datetime.now(timezone.utc).isoformat()}
-    result = await db.death_assistance.insert_one(doc)
-    doc["id"] = str(result.inserted_id)
-    doc.pop("_id", None)
-    return doc
-
-@api_router.put("/death-assistance/{case_id}")
-async def update_death_assistance(case_id: str, data: DeathUpdate, user: dict = Depends(get_current_user)):
-    upd = {k: v for k, v in data.model_dump().items() if v is not None}
-    if data.status == "approved":
-        upd["approved_by"] = user["id"]
-        upd["approved_at"] = datetime.now(timezone.utc).isoformat()
-    await db.death_assistance.update_one({"_id": safe_oid(case_id)}, {"$set": upd})
-    return s(await db.death_assistance.find_one({"_id": safe_oid(case_id)}))
-
-@api_router.delete("/death-assistance/{case_id}")
-async def delete_death_assistance(case_id: str, user: dict = Depends(require_roles("super_admin"))):
-    await db.death_assistance.delete_one({"_id": safe_oid(case_id)})
-    return {"message": "Deleted"}
-
-# ── CASHBOOK ──────────────────────────────────────────────────────────────────
-@api_router.get("/cashbook")
-async def list_cashbook(user: dict = Depends(get_current_user)):
-    entries = await db.cashbook.find().sort("created_at", 1).to_list(5000)
-    serialized = ss(entries)
-    balance = 0.0
-    for e in serialized:
-        balance += e["amount"] if e["entry_type"] == "credit" else -e["amount"]
-        e["running_balance"] = round(balance, 2)
-    serialized.reverse()
-    return serialized
-
-@api_router.post("/cashbook")
-async def create_cashbook_entry(data: CashbookCreate, user: dict = Depends(require_roles("super_admin", "treasurer"))):
-    voucher = await next_voucher()
-    doc = {**data.model_dump(), "voucher_number": voucher,
-           "recorded_by": user["id"], "created_at": datetime.now(timezone.utc).isoformat()}
-    result = await db.cashbook.insert_one(doc)
-    doc["id"] = str(result.inserted_id)
-    doc.pop("_id", None)
-    return doc
-
-@api_router.delete("/cashbook/{eid}")
-async def delete_cashbook_entry(eid: str, user: dict = Depends(require_roles("super_admin", "treasurer"))):
-    await db.cashbook.delete_one({"_id": safe_oid(eid)})
-    return {"message": "Deleted"}
-
-# ── COMMITTEE ─────────────────────────────────────────────────────────────────
-@api_router.get("/committee")
-async def list_committees(user: dict = Depends(get_current_user)):
-    docs = await db.committee.find().sort("year", -1).to_list(50)
-    return ss(docs)
-
-@api_router.post("/committee")
-async def create_committee(data: CommitteeCreate, user: dict = Depends(require_roles("super_admin", "president", "secretary"))):
-    doc = {**data.model_dump(), "is_active": True,
-           "created_by": user["id"], "created_at": datetime.now(timezone.utc).isoformat()}
-    result = await db.committee.insert_one(doc)
-    doc["id"] = str(result.inserted_id)
-    doc.pop("_id", None)
-    return doc
-
-@api_router.get("/committee/handovers")
-async def list_handovers(user: dict = Depends(get_current_user)):
-    docs = await db.committee_handovers.find().sort("handover_date", -1).to_list(100)
-    return ss(docs)
-
-
-@api_router.post("/committee/handovers")
-async def create_handover(
-    data: CommitteeHandoverCreate,
-    user: dict = Depends(require_roles("super_admin", "president", "secretary"))
-):
-    doc = {
-        **data.model_dump(),
-        "recorded_by": user["id"],
-        "recorded_by_name": user["name"],
-        "created_at": datetime.now(timezone.utc).isoformat(),
-    }
-    result = await db.committee_handovers.insert_one(doc)
-    doc["id"] = str(result.inserted_id)
-    doc.pop("_id", None)
-    return doc
-
-
-@api_router.put("/committee/{cid}")
-async def update_committee(cid: str, data: dict, user: dict = Depends(require_roles("super_admin", "president"))):
-    await db.committee.update_one({"_id": safe_oid(cid)}, {"$set": data})
-    return s(await db.committee.find_one({"_id": safe_oid(cid)}))
-
-@api_router.delete("/committee/{cid}")
-async def delete_committee(cid: str, user: dict = Depends(require_roles("super_admin"))):
-    await db.committee.delete_one({"_id": safe_oid(cid)})
-    return {"message": "Deleted"}
-
-# ── MEETINGS ──────────────────────────────────────────────────────────────────
-@api_router.get("/meetings")
-async def list_meetings(user: dict = Depends(get_current_user)):
-    docs = await db.meetings.find().sort("scheduled_date", -1).to_list(200)
-    return ss(docs)
-
-@api_router.post("/meetings")
-async def create_meeting(data: MeetingCreate, user: dict = Depends(require_roles("super_admin", "president", "secretary"))):
-    doc = {**data.model_dump(), "status": "scheduled",
-           "created_by": user["id"], "created_at": datetime.now(timezone.utc).isoformat()}
-    result = await db.meetings.insert_one(doc)
-    doc["id"] = str(result.inserted_id)
-    doc.pop("_id", None)
-    return doc
-
-@api_router.put("/meetings/{mid}")
-async def update_meeting(mid: str, data: MeetingUpdate, user: dict = Depends(get_current_user)):
-    upd = {k: v for k, v in data.model_dump().items() if v is not None}
-    await db.meetings.update_one({"_id": safe_oid(mid)}, {"$set": upd})
-    return s(await db.meetings.find_one({"_id": safe_oid(mid)}))
-
-@api_router.delete("/meetings/{mid}")
-async def delete_meeting(mid: str, user: dict = Depends(require_roles("super_admin", "president", "secretary"))):
-    await db.meetings.delete_one({"_id": safe_oid(mid)})
-    return {"message": "Deleted"}
-
-
-def build_minutes_pdf(meeting: dict) -> bytes:
-    """Generate a PDF of meeting minutes and resolutions."""
-    TYPE_LABELS_PDF = {
-        "executive": "Executive Committee Meeting",
-        "annual_general": "Annual General Body Meeting",
-        "emergency": "Emergency Meeting",
-    }
-    pdf = new_pdf()
-    pdf.set_margins(15, 15, 15)
-    pdf.add_page()
-
-    # Header
-    pdf.set_fill_color(22, 101, 52)
-    pdf.rect(0, 0, 210, 42, "F")
-    pdf.image(LOGO_WHITE, x=12, y=7, h=28)
-    pdf.set_text_color(255, 255, 255)
-    pdf.set_y(10)
-    pdf.set_font("noto", "B", 16)
-    pdf.cell(0, 9, "TWENTY20 CHARITY GROUP", ln=True, align="C")
-    pdf.set_font("noto", "B", 10)
-    pdf.cell(0, 6, "WARIYAD", ln=True, align="C")
-    pdf.set_font("noto", "", 8)
-    pdf.cell(0, 5, "Meeting Minutes", ln=True, align="C")
-
-    pdf.set_y(50)
-    pdf.set_text_color(28, 25, 23)
-
-    # Meeting details
-    meeting_type = TYPE_LABELS_PDF.get(meeting.get("meeting_type", ""), meeting.get("meeting_type", ""))
-    pdf.set_font("noto", "B", 13)
-    pdf.set_text_color(22, 101, 52)
-    title = meeting.get("title", "")
-    pdf.multi_cell(0, 8, title, align="C")
-    pdf.ln(2)
-    pdf.set_draw_color(200, 200, 200)
-    pdf.line(15, pdf.get_y(), 195, pdf.get_y())
-    pdf.ln(4)
-
-    # Meta row
-    pdf.set_text_color(28, 25, 23)
-    for label, val in [
-        ("Meeting Type", meeting_type),
-        ("Date", meeting.get("scheduled_date", "")),
-        ("Status", meeting.get("status", "").title()),
-    ]:
-        pdf.set_font("noto", "B", 10)
-        pdf.cell(50, 6, label + ":", ln=False)
-        pdf.set_font("noto", "", 10)
-        pdf.cell(0, 6, val, ln=True)
-
-    # Attendees
-    attendees = meeting.get("attendees", [])
-    if attendees:
-        pdf.ln(3)
-        pdf.set_font("noto", "B", 10)
-        pdf.cell(0, 6, f"Attendees ({len(attendees)}):", ln=True)
-        pdf.set_font("noto", "", 10)
-        pdf.multi_cell(0, 6, ", ".join(attendees))
-
-    # Agenda
-    pdf.ln(3)
-    pdf.set_font("noto", "B", 11)
-    pdf.set_text_color(22, 101, 52)
-    pdf.cell(0, 7, "AGENDA", ln=True)
-    pdf.set_draw_color(200, 200, 200)
-    pdf.line(15, pdf.get_y(), 195, pdf.get_y())
-    pdf.ln(3)
-    pdf.set_text_color(28, 25, 23)
-    pdf.set_font("noto", "", 10)
-    pdf.multi_cell(0, 6, meeting.get("agenda", ""))
-
-    # Minutes
-    if meeting.get("minutes"):
-        pdf.ln(4)
-        pdf.set_font("noto", "B", 11)
-        pdf.set_text_color(22, 101, 52)
-        pdf.cell(0, 7, "MINUTES OF MEETING", ln=True)
-        pdf.line(15, pdf.get_y(), 195, pdf.get_y())
-        pdf.ln(3)
-        pdf.set_text_color(28, 25, 23)
-        pdf.set_font("noto", "", 10)
-        pdf.multi_cell(0, 6, meeting.get("minutes", ""))
-
-    # Structured Resolutions
-    resolutions_list = meeting.get("resolutions_list", [])
-    if resolutions_list:
-        pdf.ln(4)
-        pdf.set_font("noto", "B", 11)
-        pdf.set_text_color(22, 101, 52)
-        pdf.cell(0, 7, "RESOLUTIONS", ln=True)
-        pdf.line(15, pdf.get_y(), 195, pdf.get_y())
-        pdf.ln(3)
-        for i, res in enumerate(resolutions_list, 1):
-            status = res.get("status", "passed").upper()
-            pdf.set_font("noto", "B", 10)
-            pdf.set_text_color(28, 25, 23)
-            pdf.cell(8, 6, f"{i}.", ln=False)
-            pdf.set_font("noto", "", 10)
-            # Color-code status
-            if status == "PASSED":
-                pdf.set_text_color(22, 101, 52)
-            elif status == "FAILED":
-                pdf.set_text_color(185, 28, 28)
-            else:
-                pdf.set_text_color(120, 88, 0)
-            pdf.cell(25, 6, f"[{status}]", ln=False)
-            pdf.set_text_color(28, 25, 23)
-            pdf.set_font("noto", "", 10)
-            pdf.multi_cell(0, 6, res.get("text", ""))
-    elif meeting.get("resolutions"):
-        # Fallback to legacy text resolutions
-        pdf.ln(4)
-        pdf.set_font("noto", "B", 11)
-        pdf.set_text_color(22, 101, 52)
-        pdf.cell(0, 7, "RESOLUTIONS", ln=True)
-        pdf.line(15, pdf.get_y(), 195, pdf.get_y())
-        pdf.ln(3)
-        pdf.set_text_color(28, 25, 23)
-        pdf.set_font("noto", "", 10)
-        pdf.multi_cell(0, 6, meeting.get("resolutions", ""))
-
-    # Footer
-    pdf.ln(10)
-    pdf.set_text_color(120, 113, 108)
-    pdf.set_font("noto", "I", 8)
-    pdf.set_draw_color(231, 229, 228)
-    pdf.line(15, pdf.get_y(), 195, pdf.get_y())
-    pdf.ln(4)
-    pdf.cell(0, 5, f"Minutes recorded on {datetime.now().strftime('%d %B %Y')} - Twenty20 Charity Group Wariyad", ln=True, align="C")
-    return bytes(pdf.output())
-
-
-@api_router.get("/meetings/{mid}/minutes-pdf")
-async def download_minutes_pdf(mid: str, user: dict = Depends(get_current_user)):
-    meeting = await db.meetings.find_one({"_id": safe_oid(mid)})
-    if not meeting:
-        raise HTTPException(404, "Meeting not found")
-    pdf_bytes = build_minutes_pdf(meeting)
-    title_slug = meeting.get("title", "minutes").replace(" ", "_")[:30]
-    title_slug = title_slug.encode("ascii", "ignore").decode() or "minutes"
-    return StreamingResponse(
-        io.BytesIO(pdf_bytes),
-        media_type="application/pdf",
-        headers={"Content-Disposition": f"attachment; filename=Minutes_{title_slug}.pdf"}
-    )
-
-# ── DASHBOARD ─────────────────────────────────────────────────────────────────
-@api_router.get("/dashboard/stats")
-async def dashboard_stats(user: dict = Depends(get_current_user)):
-    now = datetime.now()
-    cm, cy = now.month, now.year
-    total_members = await db.members.count_documents({"status": "active"})
-    total_all_members = await db.members.count_documents({})
-    pending_benefits = await db.benefits.count_documents({"status": {"$in": ["pending", "secretary_verified", "committee_approved"]}})
-    pending_medical = await db.medical_aid.count_documents({"status": {"$in": ["pending", "under_review"]}})
-    cashbook = await db.cashbook.find().to_list(10000)
-    balance = sum(e["amount"] * (1 if e["entry_type"] == "credit" else -1) for e in cashbook)
-    this_month_contribs = await db.contributions.find({"year": cy, "month": cm}).to_list(500)
-    monthly_collection = sum(c["amount"] for c in this_month_contribs)
-    paid_benefits = await db.benefits.find({"status": "paid"}).to_list(500)
-    total_benefits_paid = sum(b["amount"] for b in paid_benefits)
-    paid_medical = await db.medical_aid.find({"status": "paid"}).to_list(500)
-    total_medical_paid = sum(m.get("recommended_amount") or m.get("estimated_expense", 0) for m in paid_medical)
-    upcoming_meetings = await db.meetings.count_documents({"status": "scheduled"})
-    pending_death = await db.death_assistance.count_documents({"status": "pending"})
-    return {
-        "total_members": total_members, "total_all_members": total_all_members,
-        "pending_benefits": pending_benefits, "pending_medical": pending_medical,
-        "fund_balance": round(balance, 2), "monthly_collection": monthly_collection,
-        "total_benefits_paid": total_benefits_paid, "total_medical_paid": total_medical_paid,
-        "upcoming_meetings": upcoming_meetings, "pending_death": pending_death,
-        "current_month": cm, "current_year": cy
-    }
-
-@api_router.get("/dashboard/recent-activity")
-async def recent_activity(user: dict = Depends(get_current_user)):
-    contribs = await db.contributions.find().sort("paid_at", -1).limit(5).to_list(5)
-    benefits = await db.benefits.find().sort("created_at", -1).limit(5).to_list(5)
-    return {"recent_contributions": ss(contribs), "recent_benefits": ss(benefits)}
-
-@api_router.get("/dashboard/monthly-collections")
-async def monthly_collections(year: Optional[int] = None, user: dict = Depends(get_current_user)):
-    yr = year or datetime.now().year
-    data = []
-    for m in range(1, 13):
-        docs = await db.contributions.find({"year": yr, "month": m}).to_list(500)
-        data.append({"month": m, "count": len(docs), "total": sum(d["amount"] for d in docs)})
-    return data
-
-# ── REPORTS ───────────────────────────────────────────────────────────────────
-@api_router.get("/reports/members")
-async def report_members(user: dict = Depends(get_current_user)):
-    total = await db.members.count_documents({})
-    active = await db.members.count_documents({"status": "active"})
-    inactive = await db.members.count_documents({"status": "inactive"})
-    resigned = await db.members.count_documents({"status": "resigned"})
-    deceased = await db.members.count_documents({"status": "deceased"})
-    return {"total": total, "active": active, "inactive": inactive,
-            "resigned": resigned, "deceased": deceased}
-
-@api_router.get("/reports/contributions/{year}")
-async def report_contributions(year: int, user: dict = Depends(get_current_user)):
-    docs = await db.contributions.find({"year": year}).to_list(5000)
-    by_month: dict = {}
-    for d in docs:
-        m = d["month"]
-        if m not in by_month: by_month[m] = {"month": m, "count": 0, "total": 0}
-        by_month[m]["count"] += 1
-        by_month[m]["total"] += d["amount"]
-    return {"year": year, "total": sum(d["amount"] for d in docs),
-            "monthly": sorted(by_month.values(), key=lambda x: x["month"])}
-
-@api_router.get("/reports/benefits")
-async def report_benefits(user: dict = Depends(get_current_user)):
-    marriage = await db.benefits.count_documents({"benefit_type": "marriage", "status": "paid"})
-    housewarming = await db.benefits.count_documents({"benefit_type": "housewarming", "status": "paid"})
-    medical = await db.medical_aid.count_documents({"status": "paid"})
-    death = await db.death_assistance.count_documents({"status": "delivered"})
-    m_docs = await db.benefits.find({"benefit_type": "marriage", "status": "paid"}).to_list(500)
-    h_docs = await db.benefits.find({"benefit_type": "housewarming", "status": "paid"}).to_list(500)
-    med_docs = await db.medical_aid.find({"status": "paid"}).to_list(500)
-    return {
-        "marriage_count": marriage, "marriage_total": sum(d["amount"] for d in m_docs),
-        "housewarming_count": housewarming, "housewarming_total": sum(d["amount"] for d in h_docs),
-        "medical_count": medical,
-        "medical_total": sum(d.get("recommended_amount") or d.get("estimated_expense", 0) for d in med_docs),
-        "death_count": death
-    }
-
 @api_router.post("/members/import")
-async def import_members(
-    file: UploadFile = File(...),
-    user: dict = Depends(require_roles("super_admin", "secretary"))
-):
+async def import_members(file: UploadFile = File(...),
+                         user: dict = Depends(require_roles("super_admin", "secretary")),
+                         session: AsyncSession = Depends(get_session)):
     content = await file.read()
     fname = (file.filename or "").lower()
     try:
@@ -1097,18 +645,13 @@ async def import_members(
         raise
     except Exception as e:
         raise HTTPException(400, f"Error parsing file: {str(e)}")
-
-    # Normalize column names
     df.columns = [str(c).lower().strip().replace(" ", "_") for c in df.columns]
     required = ["name", "mobile", "address"]
     missing = [c for c in required if c not in df.columns]
     if missing:
         raise HTTPException(400, f"Missing required columns: {', '.join(missing)}. Required: name, mobile, address")
-
-    imported = 0
-    skipped = 0
+    imported = skipped = 0
     errors = []
-
     for i, row in df.iterrows():
         try:
             name = str(row.get("name", "")).strip()
@@ -1119,162 +662,810 @@ async def import_members(
             address = str(row.get("address", "")).strip()
             jd_raw = row.get("joining_date", row.get("joining date", ""))
             joining_date = str(jd_raw).strip() if str(jd_raw).strip() not in ("nan", "", "NaT") else datetime.now().date().isoformat()
-            # Normalize date
-            if len(joining_date) == 10 and joining_date[4] == "-":
-                pass  # already YYYY-MM-DD
-            else:
+            if not (len(joining_date) == 10 and joining_date[4] == "-"):
                 try:
                     joining_date = pd.to_datetime(joining_date).strftime("%Y-%m-%d")
-                except:
+                except Exception:
                     joining_date = datetime.now().date().isoformat()
-
             status_raw = str(row.get("status", "active")).strip().lower()
             status = status_raw if status_raw in ("active", "inactive", "resigned", "deceased") else "active"
             aadhaar_raw = str(row.get("aadhaar", "")).strip()
             aadhaar = aadhaar_raw if aadhaar_raw not in ("nan", "") else None
-
-            member_id = await next_member_id()
-            await db.members.insert_one({
-                "member_id": member_id, "name": name, "mobile": mobile,
-                "address": address, "joining_date": joining_date,
-                "status": status, "aadhaar": aadhaar,
-                "created_at": datetime.now(timezone.utc).isoformat()
-            })
+            mid = await next_member_id(session)
+            session.add(Member(member_id=mid, name=name, mobile=mobile, address=address,
+                               joining_date=joining_date, status=status, aadhaar=aadhaar))
+            await session.commit()
             imported += 1
         except Exception as e:
+            await session.rollback()
             errors.append(f"Row {i + 2}: {str(e)}")
+    return {"imported": imported, "skipped": skipped, "errors": errors, "total_rows": len(df),
+            "message": f"Successfully imported {imported} members."
+            + (f" Skipped {skipped} empty rows." if skipped else "")
+            + (f" {len(errors)} rows had errors." if errors else "")}
 
+
+def _is_uuid(val) -> bool:
+    try:
+        _uuidlib.UUID(str(val)); return True
+    except (ValueError, AttributeError, TypeError):
+        return False
+
+
+# ── SETTINGS (contribution rates) ─────────────────────────────────────────────
+@api_router.get("/settings")
+async def read_settings(user: dict = Depends(get_current_user), session: AsyncSession = Depends(get_session)):
+    s = await get_settings(session)
+    return {"standard_rate": s.standard_rate, "intro_rate": s.intro_rate,
+            "intro_months": s.intro_months, "updated_at": s.updated_at}
+
+@api_router.put("/settings")
+async def update_settings(data: SettingsUpdate, user: dict = Depends(require_roles("super_admin", "treasurer")),
+                          session: AsyncSession = Depends(get_session)):
+    s = await get_settings(session)
+    for k, v in data.model_dump().items():
+        if v is not None:
+            setattr(s, k, v)
+    s.updated_by = user["id"]; s.updated_at = datetime.now(timezone.utc).isoformat()
+    await session.commit(); await session.refresh(s)
+    return {"standard_rate": s.standard_rate, "intro_rate": s.intro_rate,
+            "intro_months": s.intro_months, "updated_at": s.updated_at}
+
+
+# ── CONTRIBUTIONS (ledger model: dues + payments) ─────────────────────────────
+@api_router.get("/contributions")
+async def list_payments(member_id: Optional[str] = None, year: Optional[int] = None,
+                        month: Optional[int] = None, user: dict = Depends(get_current_user),
+                        session: AsyncSession = Depends(get_session)):
+    """List payment events (the 'contributions' the UI shows). Members see only their own."""
+    stmt = select(Payment)
+    if member_id:
+        stmt = stmt.where(Payment.member_id == member_id)
+    elif user["role"] == "member" and user.get("member_id"):
+        stmt = stmt.where(Payment.member_id == user["member_id"])
+    if year:
+        stmt = stmt.where(Payment.year == year)
+    if month:
+        stmt = stmt.where(Payment.month == month)
+    stmt = stmt.order_by(Payment.paid_at.desc()).limit(2000)
+    res = await session.execute(stmt)
+    return [p.model_dump() for p in res.scalars().all()]
+
+
+@api_router.post("/contributions/pay")
+async def record_payment(data: PaymentCreate, user: dict = Depends(require_roles("super_admin", "treasurer")),
+                         session: AsyncSession = Depends(get_session)):
+    """Record a payment of any amount. Applies oldest arrears first, then current
+    month, then advance — updating the member's monthly_dues ledger, writing one
+    cashbook credit, and returning the allocation + updated balance."""
+    if not _is_uuid(data.member_id):
+        raise HTTPException(400, "Invalid member ID")
+    member = await session.get(Member, data.member_id)
+    if not member:
+        raise HTTPException(404, "Member not found")
+    if data.amount <= 0:
+        raise HTTPException(400, "Amount must be positive")
+    settings = await get_settings(session)
+
+    # 1) Ensure a MonthlyDues row exists for every month from ledger start..target,
+    #    so arrears are concrete and allocatable.
+    now_ref = (data.year, data.month)
+    join = _ym_parse(member.joining_date, now_ref)
+    start = _ym_parse(member.ledger_start, join)
+    inactive = _ym_parse(member.inactive_from, None)
+    existing = {(d.year, d.month): d for d in (await session.execute(
+        select(MonthlyDues).where(MonthlyDues.member_id == member.id))).scalars().all()}
+    idx = month_index(*start)
+    end_idx = month_index(*now_ref)
+    while idx <= end_idx:
+        yy, mm = divmod(idx, 12); mm += 1
+        if (yy, mm) not in existing:
+            if inactive and month_index(yy, mm) >= month_index(*inactive):
+                rate = 0
+            else:
+                rate = resolve_rate(join[0], join[1], yy, mm,
+                                    standard_rate=int(settings.standard_rate),
+                                    intro_rate=int(settings.intro_rate),
+                                    intro_months=int(settings.intro_months),
+                                    member_intro_rate=(int(member.intro_rate) if member.intro_rate is not None else None))
+            d = MonthlyDues(member_id=member.id, year=yy, month=mm, rate=rate, paid=0.0)
+            session.add(d); existing[(yy, mm)] = d
+        idx += 1
+    await session.commit()
+
+    # 2) Compute arrears (oldest-first). The member's opening_balance pending is the
+    #    OLDEST arrear (a synthetic pre-ledger bucket), tracked via a stored
+    #    "opening_paid" running tally encoded as paid on the start-month row's negative
+    #    space. Simpler + correct: derive remaining opening pending from current balance.
+    ordered = sorted(existing.values(), key=lambda d: (d.year, d.month))
+    arrears = []
+    # opening pending still outstanding = original opening pending minus what prior
+    # payments already absorbed (reconstructed from ledger: any month's paid beyond
+    # its own rate flowed to opening/older — but we keep it explicit below).
+    opening_pending = max(0, -int(member.opening_balance or 0))
+    # How much of opening has been paid so far = total paid across dues that exceeds
+    # the dues' own rates is NOT how we track it; instead store opening paydown on the
+    # member via a dedicated field-free approach: recompute from ledger up to (but not
+    # including) this payment. Since ledger already reflects stored `paid`, the opening
+    # pending remaining = opening_pending reduced by (extra paid already applied to it).
+    # We track that extra as paid recorded on the synthetic key ("OPENING").
+    opening_row = existing.get(("OPENING",))
+    opening_paid_so_far = (opening_row.paid if opening_row else 0)
+    opening_remaining = max(0, opening_pending - int(opening_paid_so_far))
+    if opening_remaining > 0:
+        arrears.append(("OPENING", 0, opening_remaining))
+    for d in ordered:
+        if (d.year, d.month) == now_ref:
+            continue
+        owed = (d.rate or 0) - (d.paid or 0)
+        if owed > 0:
+            arrears.append((d.year, d.month, owed))
+    current = existing[now_ref]
+    current_owed = max(0, (current.rate or 0) - (current.paid or 0))
+
+    # 3) Allocate
+    alloc = allocate_payment(int(data.amount), prior_balance=0, current_rate=int(current_owed),
+                             arrears_months=arrears)
+    # apply to arrears months
+    detail = []
+    for (yy, mm, amt) in alloc.detail:
+        if yy == "OPENING":
+            # record opening paydown on a synthetic MonthlyDues row (year=0,month=0)
+            orow = existing.get(("OPENING",))
+            if not orow:
+                orow = MonthlyDues(member_id=member.id, year=0, month=0, rate=0, paid=0.0)
+                session.add(orow); existing[("OPENING",)] = orow
+            orow.paid = (orow.paid or 0) + amt
+            detail.append({"year": "opening", "month": 0, "amount": amt, "kind": "arrears"})
+        else:
+            existing[(yy, mm)].paid = (existing[(yy, mm)].paid or 0) + amt
+            detail.append({"year": yy, "month": mm, "amount": amt, "kind": "arrears"})
+    if alloc.applied_to_current:
+        current.paid = (current.paid or 0) + alloc.applied_to_current
+        detail.append({"year": now_ref[0], "month": now_ref[1], "amount": alloc.applied_to_current, "kind": "current"})
+    if alloc.advance:
+        # advance is recorded on the payment; it reduces future dues implicitly via balance
+        detail.append({"year": now_ref[0], "month": now_ref[1], "amount": alloc.advance, "kind": "advance"})
+
+    # refresh status snapshots on touched dues
+    for d in existing.values():
+        bal = (d.paid or 0) - (d.rate or 0)
+        d.status = "up_to_date" if bal == 0 else ("advance" if bal > 0 else "pending")
+
+    receipt = await next_receipt(session)
+    pay = Payment(member_id=member.id, amount=data.amount, payment_method=data.payment_method,
+                  year=data.year, month=data.month, receipt_number=receipt,
+                  allocation=detail, recorded_by=user["id"])
+    session.add(pay)
+    # cashbook credit (one entry per payment)
+    session.add(Cashbook(
+        entry_type="credit", category="contribution",
+        description=f"Contribution - {member.name} ({data.year}/{data.month:02d})",
+        amount=data.amount, date=datetime.now(timezone.utc).date().isoformat(),
+        reference_id=member.id, voucher_number=await next_voucher(session), recorded_by=user["id"]))
+    await session.commit()
+    await session.refresh(pay)
+
+    bal = await member_balance(session, member, settings)
+    out = pay.model_dump()
+    out.update({"member_name": member.name, "member_code": member.member_id,
+                "balance": bal["balance"], "balance_status": bal["status"], "allocation": detail})
+    return out
+
+
+@api_router.get("/contributions/ledger/{member_id}")
+async def get_member_ledger(member_id: str, through: Optional[str] = None,
+                            user: dict = Depends(get_current_user),
+                            session: AsyncSession = Depends(get_session)):
+    """Full month-by-month ledger for one member (Prior Pending/Advance, Rate, Paid, Balance, Status)."""
+    member = await session.get(Member, safe_id(member_id))
+    if not member:
+        raise HTTPException(404, "Member not found")
+    if user["role"] == "member" and not _member_owns(user, member):
+        raise HTTPException(403, "Access denied")
+    settings = await get_settings(session)
+    ty, tm = _ym_parse(through, (datetime.now().year, datetime.now().month))
+    rows = await member_ledger(session, member, settings, ty, tm)
     return {
-        "imported": imported,
-        "skipped": skipped,
-        "errors": errors,
-        "total_rows": len(df),
-        "message": f"Successfully imported {imported} members."
-        + (f" Skipped {skipped} empty rows." if skipped else "")
-        + (f" {len(errors)} rows had errors." if errors else "")
+        "member": {"id": member.id, "name": member.name, "member_code": member.member_id,
+                   "joining_date": member.joining_date, "intro_rate": member.intro_rate,
+                   "status": member.status},
+        "rows": [{"year": r.year, "month": r.month, "prior_pending": r.prior_pending,
+                  "prior_advance": r.prior_advance, "rate": r.rate, "paid": r.paid,
+                  "balance": r.balance, "status": r.status} for r in rows],
     }
+
+
+@api_router.get("/contributions/status/{year}/{month}")
+async def contribution_status(year: int, month: int, user: dict = Depends(get_current_user),
+                              session: AsyncSession = Depends(get_session)):
+    """Monthly grid mirroring a sheet tab: every active member's prior pending/advance,
+    rate, paid, balance, status for the given month."""
+    settings = await get_settings(session)
+    members = (await session.execute(select(Member).where(Member.status == "active"))).scalars().all()
+    result = []
+    for m in members:
+        rows = await member_ledger(session, m, settings, year, month)
+        row = next((r for r in rows if r.year == year and r.month == month), None)
+        if row is None:
+            continue   # member's ledger doesn't reach this month (joined later)
+        result.append({
+            "member_id": m.id, "member_name": m.name, "member_code": m.member_id,
+            "prior_pending": row.prior_pending, "prior_advance": row.prior_advance,
+            "rate": row.rate, "paid": row.paid, "balance": row.balance, "status": row.status,
+            "is_paid": row.balance >= 0,
+        })
+    return result
+
+
+@api_router.delete("/contributions/{pid}")
+async def delete_payment(pid: str, user: dict = Depends(require_roles("super_admin", "treasurer")),
+                         session: AsyncSession = Depends(get_session)):
+    """Reverse a payment: subtract its allocation from monthly_dues, delete the payment."""
+    p = await session.get(Payment, safe_id(pid))
+    if not p:
+        return {"message": "Deleted"}
+    dues = {(d.year, d.month): d for d in (await session.execute(
+        select(MonthlyDues).where(MonthlyDues.member_id == p.member_id))).scalars().all()}
+    for item in (p.allocation or []):
+        if item.get("kind") in ("arrears", "current"):
+            d = dues.get((item["year"], item["month"]))
+            if d:
+                d.paid = max(0, (d.paid or 0) - item["amount"])
+                bal = (d.paid or 0) - (d.rate or 0)
+                d.status = "up_to_date" if bal == 0 else ("advance" if bal > 0 else "pending")
+    await session.delete(p)
+    await session.commit()
+    return {"message": "Deleted"}
+
+
+# ── BENEFITS ──────────────────────────────────────────────────────────────────
+BENEFIT_AMOUNTS = {"marriage": 5000, "housewarming": 3000}
+
+@api_router.get("/benefits")
+async def list_benefits(user: dict = Depends(get_current_user), session: AsyncSession = Depends(get_session)):
+    stmt = select(Benefit)
+    if user["role"] == "member" and user.get("member_id"):
+        stmt = stmt.where(Benefit.member_id == user["member_id"])
+    stmt = stmt.order_by(Benefit.created_at.desc()).limit(500)
+    res = await session.execute(stmt)
+    return [b.model_dump() for b in res.scalars().all()]
+
+@api_router.post("/benefits")
+async def apply_benefit(data: BenefitCreate, user: dict = Depends(get_current_user),
+                        session: AsyncSession = Depends(get_session)):
+    if not _is_uuid(data.member_id):
+        raise HTTPException(400, "Invalid member ID")
+    member = await session.get(Member, data.member_id)
+    if not member:
+        raise HTTPException(404, "Member not found")
+    if member.status != "active":
+        raise HTTPException(400, "Member is not active")
+    dup = await session.execute(select(Benefit).where(
+        Benefit.member_id == data.member_id, Benefit.benefit_type == data.benefit_type,
+        Benefit.status.not_in(["rejected"])))
+    if dup.scalar_one_or_none():
+        raise HTTPException(400, f"{data.benefit_type.capitalize()} benefit already applied")
+    b = Benefit(**data.model_dump(), member_name=member.name,
+                amount=BENEFIT_AMOUNTS.get(data.benefit_type, 0), status="pending", applied_by=user["id"])
+    session.add(b)
+    await session.commit()
+    await session.refresh(b)
+    return b.model_dump()
+
+@api_router.put("/benefits/{bid}/status")
+async def update_benefit_status(bid: str, data: StatusUpdate, user: dict = Depends(get_current_user),
+                                session: AsyncSession = Depends(get_session)):
+    b = await session.get(Benefit, safe_id(bid))
+    if not b:
+        raise HTTPException(404, "Benefit not found")
+    now = datetime.now(timezone.utc).isoformat()
+    st = data.status
+    b.status = st
+    if data.notes:
+        b.notes = data.notes
+    if st == "secretary_verified":
+        if user["role"] not in ["super_admin", "secretary"]:
+            raise HTTPException(403, "Secretary only")
+        b.secretary_verified_by = user["id"]; b.secretary_verified_at = now
+    elif st == "committee_approved":
+        if user["role"] not in ["super_admin", "president", "committee_member"]:
+            raise HTTPException(403, "Committee only")
+        b.committee_approved_by = user["id"]; b.committee_approved_at = now
+    elif st == "paid":
+        if user["role"] not in ["super_admin", "treasurer"]:
+            raise HTTPException(403, "Treasurer only")
+        b.paid_by = user["id"]; b.paid_at = now
+        session.add(Cashbook(
+            entry_type="debit", category=f"{b.benefit_type}_benefit",
+            description=f"{b.benefit_type.capitalize()} benefit - {b.member_name}",
+            amount=b.amount, date=datetime.now(timezone.utc).date().isoformat(),
+            reference_id=b.id, voucher_number=await next_voucher(session), recorded_by=user["id"]))
+    elif st == "rejected":
+        b.rejected_by = user["id"]; b.rejected_at = now
+    await session.commit()
+    await session.refresh(b)
+    return b.model_dump()
+
+
+# ── MEDICAL AID ───────────────────────────────────────────────────────────────
+@api_router.get("/medical-aid")
+async def list_medical_aid(user: dict = Depends(get_current_user), session: AsyncSession = Depends(get_session)):
+    res = await session.execute(select(MedicalAid).order_by(MedicalAid.created_at.desc()).limit(500))
+    return [m.model_dump() for m in res.scalars().all()]
+
+@api_router.post("/medical-aid")
+async def apply_medical_aid(data: MedicalAidCreate, user: dict = Depends(get_current_user),
+                            session: AsyncSession = Depends(get_session)):
+    m = MedicalAid(**data.model_dump(), status="pending", applied_by=user["id"])
+    session.add(m)
+    await session.commit()
+    await session.refresh(m)
+    return m.model_dump()
+
+@api_router.put("/medical-aid/{aid_id}")
+async def update_medical_aid(aid_id: str, data: MedicalAidUpdate, user: dict = Depends(get_current_user),
+                             session: AsyncSession = Depends(get_session)):
+    m = await session.get(MedicalAid, safe_id(aid_id))
+    if not m:
+        raise HTTPException(404, "Not found")
+    now = datetime.now(timezone.utc).isoformat()
+    for k, v in data.model_dump().items():
+        if v is not None:
+            setattr(m, k, v)
+    if data.status == "approved":
+        m.approved_by = user["id"]; m.approved_at = now
+    elif data.status == "paid":
+        session.add(Cashbook(
+            entry_type="debit", category="medical_aid",
+            description=f"Medical aid - {m.applicant_name}",
+            amount=m.recommended_amount or m.estimated_expense or 0,
+            date=datetime.now(timezone.utc).date().isoformat(),
+            reference_id=m.id, voucher_number=await next_voucher(session), recorded_by=user["id"]))
+        m.paid_by = user["id"]; m.paid_at = now
+    await session.commit()
+    await session.refresh(m)
+    return m.model_dump()
+
+@api_router.delete("/medical-aid/{aid_id}")
+async def delete_medical_aid(aid_id: str, user: dict = Depends(require_roles("super_admin")),
+                             session: AsyncSession = Depends(get_session)):
+    m = await session.get(MedicalAid, safe_id(aid_id))
+    if m:
+        await session.delete(m); await session.commit()
+    return {"message": "Deleted"}
+
+
+# ── DEATH ASSISTANCE ──────────────────────────────────────────────────────────
+@api_router.get("/death-assistance")
+async def list_death_assistance(user: dict = Depends(get_current_user), session: AsyncSession = Depends(get_session)):
+    res = await session.execute(select(DeathAssistance).order_by(DeathAssistance.created_at.desc()).limit(500))
+    return [d.model_dump() for d in res.scalars().all()]
+
+@api_router.post("/death-assistance")
+async def create_death_assistance(data: DeathCreate, user: dict = Depends(get_current_user),
+                                  session: AsyncSession = Depends(get_session)):
+    d = DeathAssistance(**data.model_dump(), status="pending", created_by=user["id"])
+    session.add(d)
+    await session.commit()
+    await session.refresh(d)
+    return d.model_dump()
+
+@api_router.put("/death-assistance/{case_id}")
+async def update_death_assistance(case_id: str, data: DeathUpdate, user: dict = Depends(get_current_user),
+                                  session: AsyncSession = Depends(get_session)):
+    d = await session.get(DeathAssistance, safe_id(case_id))
+    if not d:
+        raise HTTPException(404, "Not found")
+    for k, v in data.model_dump().items():
+        if v is not None:
+            setattr(d, k, v)
+    if data.status == "approved":
+        d.approved_by = user["id"]; d.approved_at = datetime.now(timezone.utc).isoformat()
+    await session.commit()
+    await session.refresh(d)
+    return d.model_dump()
+
+@api_router.delete("/death-assistance/{case_id}")
+async def delete_death_assistance(case_id: str, user: dict = Depends(require_roles("super_admin")),
+                                  session: AsyncSession = Depends(get_session)):
+    d = await session.get(DeathAssistance, safe_id(case_id))
+    if d:
+        await session.delete(d); await session.commit()
+    return {"message": "Deleted"}
+
+
+# ── CASHBOOK ──────────────────────────────────────────────────────────────────
+@api_router.get("/cashbook")
+async def list_cashbook(user: dict = Depends(get_current_user), session: AsyncSession = Depends(get_session)):
+    res = await session.execute(select(Cashbook).order_by(Cashbook.created_at.asc()).limit(5000))
+    serialized = [e.model_dump() for e in res.scalars().all()]
+    balance = 0.0
+    for e in serialized:
+        balance += e["amount"] if e["entry_type"] == "credit" else -e["amount"]
+        e["running_balance"] = round(balance, 2)
+    serialized.reverse()
+    return serialized
+
+@api_router.post("/cashbook")
+async def create_cashbook_entry(data: CashbookCreate, user: dict = Depends(require_roles("super_admin", "treasurer")),
+                                session: AsyncSession = Depends(get_session)):
+    e = Cashbook(**data.model_dump(), voucher_number=await next_voucher(session), recorded_by=user["id"])
+    session.add(e)
+    await session.commit()
+    await session.refresh(e)
+    return e.model_dump()
+
+@api_router.delete("/cashbook/{eid}")
+async def delete_cashbook_entry(eid: str, user: dict = Depends(require_roles("super_admin", "treasurer")),
+                                session: AsyncSession = Depends(get_session)):
+    e = await session.get(Cashbook, safe_id(eid))
+    if e:
+        await session.delete(e); await session.commit()
+    return {"message": "Deleted"}
+
+
+# ── COMMITTEE ─────────────────────────────────────────────────────────────────
+@api_router.get("/committee")
+async def list_committees(user: dict = Depends(get_current_user), session: AsyncSession = Depends(get_session)):
+    res = await session.execute(select(Committee).order_by(Committee.year.desc()).limit(50))
+    return [c.model_dump() for c in res.scalars().all()]
+
+@api_router.post("/committee")
+async def create_committee(data: CommitteeCreate, user: dict = Depends(require_roles("super_admin", "president", "secretary")),
+                           session: AsyncSession = Depends(get_session)):
+    c = Committee(**data.model_dump(), is_active=True, created_by=user["id"])
+    session.add(c)
+    await session.commit()
+    await session.refresh(c)
+    return c.model_dump()
+
+@api_router.get("/committee/handovers")
+async def list_handovers(user: dict = Depends(get_current_user), session: AsyncSession = Depends(get_session)):
+    res = await session.execute(select(CommitteeHandover).order_by(CommitteeHandover.handover_date.desc()).limit(100))
+    return [h.model_dump() for h in res.scalars().all()]
+
+@api_router.post("/committee/handovers")
+async def create_handover(data: CommitteeHandoverCreate,
+                          user: dict = Depends(require_roles("super_admin", "president", "secretary")),
+                          session: AsyncSession = Depends(get_session)):
+    h = CommitteeHandover(**data.model_dump(), recorded_by=user["id"], recorded_by_name=user["name"])
+    session.add(h)
+    await session.commit()
+    await session.refresh(h)
+    return h.model_dump()
+
+@api_router.put("/committee/{cid}")
+async def update_committee(cid: str, data: dict, user: dict = Depends(require_roles("super_admin", "president")),
+                           session: AsyncSession = Depends(get_session)):
+    c = await session.get(Committee, safe_id(cid))
+    if not c:
+        raise HTTPException(404, "Not found")
+    for k, v in data.items():
+        if hasattr(c, k):
+            setattr(c, k, v)
+    await session.commit()
+    await session.refresh(c)
+    return c.model_dump()
+
+@api_router.delete("/committee/{cid}")
+async def delete_committee(cid: str, user: dict = Depends(require_roles("super_admin")),
+                           session: AsyncSession = Depends(get_session)):
+    c = await session.get(Committee, safe_id(cid))
+    if c:
+        await session.delete(c); await session.commit()
+    return {"message": "Deleted"}
+
+
+# ── MEETINGS ──────────────────────────────────────────────────────────────────
+@api_router.get("/meetings")
+async def list_meetings(user: dict = Depends(get_current_user), session: AsyncSession = Depends(get_session)):
+    res = await session.execute(select(Meeting).order_by(Meeting.scheduled_date.desc()).limit(200))
+    return [m.model_dump() for m in res.scalars().all()]
+
+@api_router.post("/meetings")
+async def create_meeting(data: MeetingCreate, user: dict = Depends(require_roles("super_admin", "president", "secretary")),
+                         session: AsyncSession = Depends(get_session)):
+    m = Meeting(**data.model_dump(), status="scheduled", created_by=user["id"])
+    session.add(m)
+    await session.commit()
+    await session.refresh(m)
+    return m.model_dump()
+
+@api_router.put("/meetings/{mid}")
+async def update_meeting(mid: str, data: MeetingUpdate, user: dict = Depends(get_current_user),
+                         session: AsyncSession = Depends(get_session)):
+    m = await session.get(Meeting, safe_id(mid))
+    if not m:
+        raise HTTPException(404, "Not found")
+    for k, v in data.model_dump().items():
+        if v is not None:
+            setattr(m, k, v)
+    await session.commit()
+    await session.refresh(m)
+    return m.model_dump()
+
+@api_router.delete("/meetings/{mid}")
+async def delete_meeting(mid: str, user: dict = Depends(require_roles("super_admin", "president", "secretary")),
+                         session: AsyncSession = Depends(get_session)):
+    m = await session.get(Meeting, safe_id(mid))
+    if m:
+        await session.delete(m); await session.commit()
+    return {"message": "Deleted"}
+
+def build_minutes_pdf(meeting: dict) -> bytes:
+    TYPE_LABELS_PDF = {"executive": "Executive Committee Meeting",
+                       "annual_general": "Annual General Body Meeting", "emergency": "Emergency Meeting"}
+    pdf = new_pdf(); pdf.set_margins(15, 15, 15); pdf.add_page()
+    pdf.set_fill_color(22, 101, 52); pdf.rect(0, 0, 210, 42, "F")
+    try: pdf.image(LOGO_WHITE, x=12, y=7, h=28)
+    except Exception: pass
+    pdf.set_text_color(255, 255, 255); pdf.set_y(10); pdf.set_font("noto", "B", 16)
+    pdf.cell(0, 9, "TWENTY20 CHARITY GROUP", ln=True, align="C")
+    pdf.set_font("noto", "B", 10); pdf.cell(0, 6, "WARIYAD", ln=True, align="C")
+    pdf.set_font("noto", "", 8); pdf.cell(0, 5, "Meeting Minutes", ln=True, align="C")
+    pdf.set_y(50); pdf.set_text_color(28, 25, 23)
+    meeting_type = TYPE_LABELS_PDF.get(meeting.get("meeting_type", ""), meeting.get("meeting_type", ""))
+    pdf.set_font("noto", "B", 13); pdf.set_text_color(22, 101, 52)
+    pdf.multi_cell(0, 8, meeting.get("title", ""), align="C"); pdf.ln(2)
+    pdf.set_draw_color(200, 200, 200); pdf.line(15, pdf.get_y(), 195, pdf.get_y()); pdf.ln(4)
+    pdf.set_text_color(28, 25, 23)
+    for label, val in [("Meeting Type", meeting_type), ("Date", meeting.get("scheduled_date", "")),
+                       ("Status", (meeting.get("status", "") or "").title())]:
+        pdf.set_font("noto", "B", 10); pdf.cell(50, 6, label + ":", ln=False)
+        pdf.set_font("noto", "", 10); pdf.cell(0, 6, val, ln=True)
+    attendees = meeting.get("attendees") or []
+    if attendees:
+        pdf.ln(3); pdf.set_font("noto", "B", 10); pdf.cell(0, 6, f"Attendees ({len(attendees)}):", ln=True)
+        pdf.set_font("noto", "", 10); pdf.multi_cell(0, 6, ", ".join(attendees))
+    pdf.ln(3); pdf.set_font("noto", "B", 11); pdf.set_text_color(22, 101, 52); pdf.cell(0, 7, "AGENDA", ln=True)
+    pdf.set_draw_color(200, 200, 200); pdf.line(15, pdf.get_y(), 195, pdf.get_y()); pdf.ln(3)
+    pdf.set_text_color(28, 25, 23); pdf.set_font("noto", "", 10); pdf.multi_cell(0, 6, meeting.get("agenda", ""))
+    if meeting.get("minutes"):
+        pdf.ln(4); pdf.set_font("noto", "B", 11); pdf.set_text_color(22, 101, 52)
+        pdf.cell(0, 7, "MINUTES OF MEETING", ln=True); pdf.line(15, pdf.get_y(), 195, pdf.get_y()); pdf.ln(3)
+        pdf.set_text_color(28, 25, 23); pdf.set_font("noto", "", 10); pdf.multi_cell(0, 6, meeting.get("minutes", ""))
+    resolutions_list = meeting.get("resolutions_list") or []
+    if resolutions_list:
+        pdf.ln(4); pdf.set_font("noto", "B", 11); pdf.set_text_color(22, 101, 52)
+        pdf.cell(0, 7, "RESOLUTIONS", ln=True); pdf.line(15, pdf.get_y(), 195, pdf.get_y()); pdf.ln(3)
+        for i, res in enumerate(resolutions_list, 1):
+            status = (res.get("status", "passed") or "passed").upper()
+            pdf.set_font("noto", "B", 10); pdf.set_text_color(28, 25, 23); pdf.cell(8, 6, f"{i}.", ln=False)
+            pdf.set_font("noto", "", 10)
+            pdf.set_text_color(*( (22,101,52) if status=="PASSED" else (185,28,28) if status=="FAILED" else (120,88,0)))
+            pdf.cell(25, 6, f"[{status}]", ln=False)
+            pdf.set_text_color(28, 25, 23); pdf.set_font("noto", "", 10); pdf.multi_cell(0, 6, res.get("text", ""))
+    elif meeting.get("resolutions"):
+        pdf.ln(4); pdf.set_font("noto", "B", 11); pdf.set_text_color(22, 101, 52)
+        pdf.cell(0, 7, "RESOLUTIONS", ln=True); pdf.line(15, pdf.get_y(), 195, pdf.get_y()); pdf.ln(3)
+        pdf.set_text_color(28, 25, 23); pdf.set_font("noto", "", 10); pdf.multi_cell(0, 6, meeting.get("resolutions", ""))
+    pdf.ln(10); pdf.set_text_color(120, 113, 108); pdf.set_font("noto", "I", 8)
+    pdf.set_draw_color(231, 229, 228); pdf.line(15, pdf.get_y(), 195, pdf.get_y()); pdf.ln(4)
+    pdf.cell(0, 5, f"Minutes recorded on {datetime.now().strftime('%d %B %Y')} - Twenty20 Charity Group Wariyad", ln=True, align="C")
+    return bytes(pdf.output())
+
+@api_router.get("/meetings/{mid}/minutes-pdf")
+async def download_minutes_pdf(mid: str, user: dict = Depends(get_current_user),
+                               session: AsyncSession = Depends(get_session)):
+    meeting = await session.get(Meeting, safe_id(mid))
+    if not meeting:
+        raise HTTPException(404, "Meeting not found")
+    pdf_bytes = build_minutes_pdf(meeting.model_dump())
+    title_slug = (meeting.title or "minutes").replace(" ", "_")[:30].encode("ascii", "ignore").decode() or "minutes"
+    return StreamingResponse(io.BytesIO(pdf_bytes), media_type="application/pdf",
+        headers={"Content-Disposition": f"attachment; filename=Minutes_{title_slug}.pdf"})
+
+
+# ── DASHBOARD ─────────────────────────────────────────────────────────────────
+async def _count(session, model, *conds):
+    stmt = select(func.count()).select_from(model)
+    for c in conds:
+        stmt = stmt.where(c)
+    return (await session.execute(stmt)).scalar_one()
+
+@api_router.get("/dashboard/stats")
+async def dashboard_stats(user: dict = Depends(get_current_user), session: AsyncSession = Depends(get_session)):
+    now = datetime.now(); cm, cy = now.month, now.year
+    total_members = await _count(session, Member, Member.status == "active")
+    total_all_members = await _count(session, Member)
+    pending_benefits = await _count(session, Benefit, Benefit.status.in_(["pending", "secretary_verified", "committee_approved"]))
+    pending_medical = await _count(session, MedicalAid, MedicalAid.status.in_(["pending", "under_review"]))
+    cb = (await session.execute(select(Cashbook))).scalars().all()
+    balance = sum(e.amount * (1 if e.entry_type == "credit" else -1) for e in cb)
+    tmc = (await session.execute(select(Payment).where(Payment.year == cy, Payment.month == cm))).scalars().all()
+    monthly_collection = sum(c.amount for c in tmc)
+    paid_benefits = (await session.execute(select(Benefit).where(Benefit.status == "paid"))).scalars().all()
+    total_benefits_paid = sum(b.amount for b in paid_benefits)
+    paid_medical = (await session.execute(select(MedicalAid).where(MedicalAid.status == "paid"))).scalars().all()
+    total_medical_paid = sum((m.recommended_amount or m.estimated_expense or 0) for m in paid_medical)
+    upcoming_meetings = await _count(session, Meeting, Meeting.status == "scheduled")
+    pending_death = await _count(session, DeathAssistance, DeathAssistance.status == "pending")
+    # Ledger totals: sum each active member's outstanding / advance as of now
+    settings = await get_settings(session)
+    active_members = (await session.execute(select(Member).where(Member.status == "active"))).scalars().all()
+    total_outstanding = total_advance = 0
+    for m in active_members:
+        b = await member_balance(session, m, settings)
+        total_outstanding += b["outstanding"]
+        total_advance += b["advance"]
+    return {"total_members": total_members, "total_all_members": total_all_members,
+            "pending_benefits": pending_benefits, "pending_medical": pending_medical,
+            "fund_balance": round(balance, 2), "monthly_collection": monthly_collection,
+            "total_benefits_paid": total_benefits_paid, "total_medical_paid": total_medical_paid,
+            "upcoming_meetings": upcoming_meetings, "pending_death": pending_death,
+            "total_outstanding": round(total_outstanding, 2), "total_advance": round(total_advance, 2),
+            "current_month": cm, "current_year": cy}
+
+@api_router.get("/dashboard/recent-activity")
+async def recent_activity(user: dict = Depends(get_current_user), session: AsyncSession = Depends(get_session)):
+    contribs = (await session.execute(select(Payment).order_by(Payment.paid_at.desc()).limit(5))).scalars().all()
+    benefits = (await session.execute(select(Benefit).order_by(Benefit.created_at.desc()).limit(5))).scalars().all()
+    return {"recent_contributions": [c.model_dump() for c in contribs],
+            "recent_benefits": [b.model_dump() for b in benefits]}
+
+@api_router.get("/dashboard/monthly-collections")
+async def monthly_collections(year: Optional[int] = None, user: dict = Depends(get_current_user),
+                              session: AsyncSession = Depends(get_session)):
+    yr = year or datetime.now().year
+    data = []
+    for m in range(1, 13):
+        docs = (await session.execute(select(Payment).where(Payment.year == yr, Payment.month == m))).scalars().all()
+        data.append({"month": m, "count": len(docs), "total": sum(d.amount for d in docs)})
+    return data
+
+
+# ── REPORTS ───────────────────────────────────────────────────────────────────
+@api_router.get("/reports/members")
+async def report_members(user: dict = Depends(get_current_user), session: AsyncSession = Depends(get_session)):
+    return {
+        "total": await _count(session, Member),
+        "active": await _count(session, Member, Member.status == "active"),
+        "inactive": await _count(session, Member, Member.status == "inactive"),
+        "resigned": await _count(session, Member, Member.status == "resigned"),
+        "deceased": await _count(session, Member, Member.status == "deceased"),
+    }
+
+@api_router.get("/reports/contributions/{year}")
+async def report_contributions(year: int, user: dict = Depends(get_current_user), session: AsyncSession = Depends(get_session)):
+    docs = (await session.execute(select(Payment).where(Payment.year == year))).scalars().all()
+    by_month: dict = {}
+    for d in docs:
+        by_month.setdefault(d.month, {"month": d.month, "count": 0, "total": 0})
+        by_month[d.month]["count"] += 1
+        by_month[d.month]["total"] += d.amount
+    return {"year": year, "total": sum(d.amount for d in docs),
+            "monthly": sorted(by_month.values(), key=lambda x: x["month"])}
+
+@api_router.get("/reports/benefits")
+async def report_benefits(user: dict = Depends(get_current_user), session: AsyncSession = Depends(get_session)):
+    m_docs = (await session.execute(select(Benefit).where(Benefit.benefit_type == "marriage", Benefit.status == "paid"))).scalars().all()
+    h_docs = (await session.execute(select(Benefit).where(Benefit.benefit_type == "housewarming", Benefit.status == "paid"))).scalars().all()
+    med_docs = (await session.execute(select(MedicalAid).where(MedicalAid.status == "paid"))).scalars().all()
+    death = await _count(session, DeathAssistance, DeathAssistance.status == "delivered")
+    return {
+        "marriage_count": len(m_docs), "marriage_total": sum(d.amount for d in m_docs),
+        "housewarming_count": len(h_docs), "housewarming_total": sum(d.amount for d in h_docs),
+        "medical_count": len(med_docs),
+        "medical_total": sum((d.recommended_amount or d.estimated_expense or 0) for d in med_docs),
+        "death_count": death,
+    }
+
+
+@api_router.get("/reports/summary")
+async def report_summary(from_ym: Optional[str] = None, to_ym: Optional[str] = None,
+                         user: dict = Depends(require_roles("super_admin", "president", "treasurer", "secretary", "auditor")),
+                         session: AsyncSession = Depends(get_session)):
+    """Monthly contribution summary mirroring the spreadsheet 'Summary' tab:
+    per month → members, up-to-date, pending, advance, total collected,
+    total outstanding, total advance credit, collection rate."""
+    settings = await get_settings(session)
+    now = datetime.now()
+    frm = _ym_parse(from_ym, (now.year, now.month))
+    to = _ym_parse(to_ym, (now.year + (now.month + 10) // 12, (now.month + 10) % 12 + 1))  # ~12 months
+    members = (await session.execute(select(Member))).scalars().all()
+    # payments per (year,month) for "collected"
+    pays = (await session.execute(select(Payment))).scalars().all()
+    collected = {}
+    for p in pays:
+        collected[(p.year, p.month)] = collected.get((p.year, p.month), 0) + p.amount
+
+    rows = []
+    idx = month_index(*frm); end = month_index(*to)
+    tot_collected = tot_out = tot_adv = 0
+    while idx <= end:
+        yy, mm = divmod(idx, 12); mm += 1
+        up = pend = adv = 0
+        out_sum = adv_sum = active = 0
+        for m in members:
+            if m.status != "active":
+                continue
+            mrows = await member_ledger(session, m, settings, yy, mm)
+            row = next((r for r in mrows if r.year == yy and r.month == mm), None)
+            if row is None:
+                continue
+            active += 1
+            # Org definition (matches the spreadsheet Summary tab):
+            # "Up to date" = not in arrears (balance >= 0); advance members are
+            # ALSO counted in the Advance column (so up_to_date + pending = members,
+            # and advance is an overlapping subset of up_to_date).
+            if row.balance >= 0:
+                up += 1
+            else:
+                pend += 1; out_sum += -row.balance
+            if row.balance > 0:
+                adv += 1; adv_sum += row.balance
+        coll = collected.get((yy, mm), 0)
+        rate = (up / active) if active else 0
+        rows.append({"year": yy, "month": mm, "members": active, "up_to_date": up,
+                     "pending": pend, "advance": adv, "collected": coll,
+                     "outstanding": out_sum, "advance_credit": adv_sum,
+                     "collection_rate": round(rate, 4)})
+        tot_collected += coll; tot_out = out_sum; tot_adv = adv_sum  # outstanding/advance are point-in-time
+        idx += 1
+    return {"from": f"{frm[0]}-{frm[1]:02d}", "to": f"{to[0]}-{to[1]:02d}",
+            "rows": rows, "total_collected": tot_collected,
+            "current_outstanding": tot_out, "current_advance": tot_adv}
+
 
 # ── PDF RECEIPT ───────────────────────────────────────────────────────────────
 MONTHS_NAMES = ["","January","February","March","April","May","June",
                 "July","August","September","October","November","December"]
 
-def build_receipt_pdf(contrib: dict, member: dict | None) -> bytes:
-    pdf = new_pdf()
-    pdf.set_margins(15, 15, 15)
-    pdf.add_page()
-
-    # Header bar
-    pdf.set_fill_color(22, 101, 52)
-    pdf.rect(0, 0, 210, 42, "F")
-    pdf.image(LOGO_WHITE, x=12, y=7, h=28)
-    pdf.set_text_color(255, 255, 255)
-    pdf.set_y(10)
-    pdf.set_font("noto", "B", 18)
+def build_receipt_pdf(contrib: dict, member: Optional[dict]) -> bytes:
+    pdf = new_pdf(); pdf.set_margins(15, 15, 15); pdf.add_page()
+    pdf.set_fill_color(22, 101, 52); pdf.rect(0, 0, 210, 42, "F")
+    try: pdf.image(LOGO_WHITE, x=12, y=7, h=28)
+    except Exception: pass
+    pdf.set_text_color(255, 255, 255); pdf.set_y(10); pdf.set_font("noto", "B", 18)
     pdf.cell(0, 9, "TWENTY20 CHARITY GROUP", ln=True, align="C")
-    pdf.set_font("noto", "B", 11)
-    pdf.cell(0, 7, "WARIYAD", ln=True, align="C")
-    pdf.set_font("noto", "", 9)
-    pdf.cell(0, 6, "Monthly Contribution Receipt", ln=True, align="C")
-
-    pdf.set_y(50)
-    pdf.set_text_color(28, 25, 23)
-
-    # Receipt meta
-    def row(label: str, value: str, bold_val: bool = False):
-        pdf.set_font("noto", "B", 10)
-        pdf.cell(60, 8, label, ln=False)
-        pdf.set_font("noto", "B" if bold_val else "", 10)
-        pdf.cell(0, 8, value, ln=True)
-
+    pdf.set_font("noto", "B", 11); pdf.cell(0, 7, "WARIYAD", ln=True, align="C")
+    pdf.set_font("noto", "", 9); pdf.cell(0, 6, "Monthly Contribution Receipt", ln=True, align="C")
+    pdf.set_y(50); pdf.set_text_color(28, 25, 23)
+    def row(label, value, bold_val=False):
+        pdf.set_font("noto", "B", 10); pdf.cell(60, 8, label, ln=False)
+        pdf.set_font("noto", "B" if bold_val else "", 10); pdf.cell(0, 8, value, ln=True)
     row("Receipt No:", contrib.get("receipt_number", "N/A"))
     paid_at = contrib.get("paid_at", "")
-    try:
-        dt_obj = datetime.fromisoformat(paid_at)
-        date_str = dt_obj.strftime("%d %B %Y")
-    except Exception:
-        date_str = paid_at[:10] if paid_at else "-"
+    try: date_str = datetime.fromisoformat(paid_at).strftime("%d %B %Y")
+    except Exception: date_str = paid_at[:10] if paid_at else "-"
     row("Date:", date_str)
-
-    # Divider
-    pdf.set_draw_color(200, 200, 200)
-    pdf.ln(3)
-    pdf.line(15, pdf.get_y(), 195, pdf.get_y())
-    pdf.ln(5)
-
-    # Member info
-    pdf.set_font("noto", "B", 10)
-    pdf.set_text_color(22, 101, 52)
-    pdf.cell(0, 7, "MEMBER DETAILS", ln=True)
+    pdf.set_draw_color(200, 200, 200); pdf.ln(3); pdf.line(15, pdf.get_y(), 195, pdf.get_y()); pdf.ln(5)
+    pdf.set_font("noto", "B", 10); pdf.set_text_color(22, 101, 52); pdf.cell(0, 7, "MEMBER DETAILS", ln=True)
     pdf.set_text_color(28, 25, 23)
     row("Name:", member["name"] if member else "Unknown")
     row("Member ID:", member["member_id"] if member else "-")
-    row("Mobile:", member.get("mobile", "-") if member else "-")
-
-    pdf.ln(3)
-    pdf.line(15, pdf.get_y(), 195, pdf.get_y())
-    pdf.ln(5)
-
-    # Contribution info
-    pdf.set_font("noto", "B", 10)
-    pdf.set_text_color(22, 101, 52)
-    pdf.cell(0, 7, "CONTRIBUTION DETAILS", ln=True)
+    row("Mobile:", (member.get("mobile", "-") if member else "-"))
+    pdf.ln(3); pdf.line(15, pdf.get_y(), 195, pdf.get_y()); pdf.ln(5)
+    pdf.set_font("noto", "B", 10); pdf.set_text_color(22, 101, 52); pdf.cell(0, 7, "CONTRIBUTION DETAILS", ln=True)
     pdf.set_text_color(28, 25, 23)
     month_num = contrib.get("month", 1)
     month_str = MONTHS_NAMES[month_num] if 1 <= month_num <= 12 else str(month_num)
     row("Period:", f"{month_str} {contrib.get('year', '')}")
-    method = str(contrib.get("payment_method", "-")).replace("_", " ").title()
-    row("Payment Method:", method)
-
-    # Amount box
-    pdf.ln(5)
-    pdf.set_fill_color(240, 253, 244)
-    pdf.set_draw_color(22, 101, 52)
-    pdf.rect(15, pdf.get_y(), 180, 18, "FD")
-    pdf.set_font("noto", "B", 14)
-    pdf.set_text_color(22, 101, 52)
-    amount = contrib.get("amount", 0)
-    pdf.set_y(pdf.get_y() + 3)
-    pdf.cell(0, 8, f"AMOUNT PAID: Rs. {amount:,.0f}/-", ln=True, align="C")
-
-    # Footer
-    pdf.ln(15)
-    pdf.set_text_color(120, 113, 108)
-    pdf.set_font("noto", "I", 8)
-    pdf.set_draw_color(231, 229, 228)
-    pdf.line(15, pdf.get_y(), 195, pdf.get_y())
-    pdf.ln(4)
+    row("Payment Method:", str(contrib.get("payment_method", "-")).replace("_", " ").title())
+    pdf.ln(5); pdf.set_fill_color(240, 253, 244); pdf.set_draw_color(22, 101, 52)
+    pdf.rect(15, pdf.get_y(), 180, 18, "FD"); pdf.set_font("noto", "B", 14); pdf.set_text_color(22, 101, 52)
+    pdf.set_y(pdf.get_y() + 3); pdf.cell(0, 8, f"AMOUNT PAID: Rs. {contrib.get('amount', 0):,.0f}/-", ln=True, align="C")
+    pdf.ln(15); pdf.set_text_color(120, 113, 108); pdf.set_font("noto", "I", 8)
+    pdf.set_draw_color(231, 229, 228); pdf.line(15, pdf.get_y(), 195, pdf.get_y()); pdf.ln(4)
     pdf.cell(0, 5, "This is a computer-generated receipt. No signature required.", ln=True, align="C")
     pdf.cell(0, 5, "Twenty20 Charity Group Wariyad - Serving the community", ln=True, align="C")
-
     return bytes(pdf.output())
 
-@api_router.get("/contributions/{contrib_id}/receipt")
-async def download_receipt(contrib_id: str, user: dict = Depends(get_current_user)):
-    contrib = await db.contributions.find_one({"_id": safe_oid(contrib_id)})
-    if not contrib:
-        raise HTTPException(404, "Contribution not found")
-    # Members can only download their own receipts (match on _id or TW- code)
-    if user["role"] == "member":
-        owner = None
-        cmid = contrib.get("member_id")
-        if cmid and ObjectId.is_valid(cmid):
-            owner = await db.members.find_one({"_id": ObjectId(cmid)})
-        if not _member_owns(user, owner):
-            raise HTTPException(403, "Access denied")
-    member = None
-    if contrib.get("member_id") and ObjectId.is_valid(contrib["member_id"]):
-        try:
-            member = await db.members.find_one({"_id": ObjectId(contrib["member_id"])})
-        except Exception:
-            pass
+@api_router.get("/contributions/{payment_id}/receipt")
+async def download_receipt(payment_id: str, user: dict = Depends(get_current_user),
+                           session: AsyncSession = Depends(get_session)):
+    pay = await session.get(Payment, safe_id(payment_id))
+    if not pay:
+        raise HTTPException(404, "Payment not found")
+    member = await session.get(Member, pay.member_id) if _is_uuid(pay.member_id) else None
+    if user["role"] == "member" and not _member_owns(user, member):
+        raise HTTPException(403, "Access denied")
+    pdf_bytes = build_receipt_pdf(pay.model_dump(), member.model_dump() if member else None)
+    rnum = pay.receipt_number or "receipt"
+    return StreamingResponse(io.BytesIO(pdf_bytes), media_type="application/pdf",
+        headers={"Content-Disposition": f"attachment; filename={rnum}.pdf"})
 
-    pdf_bytes = build_receipt_pdf(contrib, member)
-    rnum = contrib.get("receipt_number", "receipt")
-    return StreamingResponse(
-        io.BytesIO(pdf_bytes),
-        media_type="application/pdf",
-        headers={"Content-Disposition": f"attachment; filename={rnum}.pdf"}
-    )
 
 # ── EXPORT REPORTS ────────────────────────────────────────────────────────────
 _MONTH_NAMES_FULL = ["","January","February","March","April","May","June",
@@ -1289,65 +1480,55 @@ def _safe_cell(val) -> str:
     return s
 
 @api_router.get("/reports/export/excel")
-async def export_excel_report(
-    year: Optional[int] = None,
-    user: dict = Depends(require_roles("super_admin", "president", "treasurer", "secretary", "auditor"))
-):
+async def export_excel_report(year: Optional[int] = None,
+        user: dict = Depends(require_roles("super_admin", "president", "treasurer", "secretary", "auditor")),
+        session: AsyncSession = Depends(get_session)):
     yr = year or datetime.now().year
-    contributions = await db.contributions.find({"year": yr}).to_list(5000)
-    benefits = await db.benefits.find({}).to_list(2000)
-    cashbook = await db.cashbook.find({}).sort("created_at", 1).to_list(10000)
-    members = await db.members.find({}).to_list(1000)
-    member_map = {str(m["_id"]): m for m in members}
+    contributions = [c.model_dump() for c in (await session.execute(select(Payment).where(Payment.year == yr))).scalars().all()]
+    benefits = [b.model_dump() for b in (await session.execute(select(Benefit))).scalars().all()]
+    cashbook = [e.model_dump() for e in (await session.execute(select(Cashbook).order_by(Cashbook.created_at.asc()))).scalars().all()]
+    members = [m.model_dump() for m in (await session.execute(select(Member))).scalars().all()]
+    member_map = {m["id"]: m for m in members}
 
-    contrib_rows = [
-        {
-            "Receipt No":       _safe_cell(c.get("receipt_number", "")),
-            "Month":            _MONTH_NAMES_SHORT[c.get("month", 1)],
-            "Year":             c.get("year", yr),
-            "Member Name":      _safe_cell(member_map.get(c.get("member_id", ""), {}).get("name", "Unknown")),
-            "Amount (Rs)":      c.get("amount", 0),
-            "Payment Method":   _safe_cell(c.get("payment_method", "").replace("_", " ").title()),
-            "Date Paid":        c.get("paid_at", "")[:10] if c.get("paid_at") else "",
-        }
-        for c in contributions
-    ]
-    benefit_rows = [
-        {
-            "Benefit Type": _safe_cell(b.get("benefit_type", "").replace("_", " ").title()),
-            "Member Name":  _safe_cell(b.get("member_name", "")),
-            "Amount (Rs)":  b.get("amount", 0),
-            "Status":       _safe_cell(b.get("status", "").replace("_", " ").title()),
-            "Event Date":   b.get("event_date", ""),
-            "Applied Date": b.get("created_at", "")[:10] if b.get("created_at") else "",
-        }
-        for b in benefits
-    ]
+    contrib_rows = [{
+        "Receipt No": _safe_cell(c.get("receipt_number", "")),
+        "Month": _MONTH_NAMES_SHORT[c.get("month", 1)],
+        "Year": c.get("year", yr),
+        "Member Name": _safe_cell(member_map.get(c.get("member_id", ""), {}).get("name", "Unknown")),
+        "Amount (Rs)": c.get("amount", 0),
+        "Payment Method": _safe_cell(c.get("payment_method", "").replace("_", " ").title()),
+        "Date Paid": c.get("paid_at", "")[:10] if c.get("paid_at") else "",
+    } for c in contributions]
+    benefit_rows = [{
+        "Benefit Type": _safe_cell((b.get("benefit_type") or "").replace("_", " ").title()),
+        "Member Name": _safe_cell(b.get("member_name", "")),
+        "Amount (Rs)": b.get("amount", 0),
+        "Status": _safe_cell((b.get("status") or "").replace("_", " ").title()),
+        "Event Date": b.get("event_date", ""),
+        "Applied Date": b.get("created_at", "")[:10] if b.get("created_at") else "",
+    } for b in benefits]
     running_bal = 0
     cashbook_rows = []
     for e in cashbook:
         running_bal += e["amount"] if e["entry_type"] == "credit" else -e["amount"]
         cashbook_rows.append({
-            "Voucher No":   _safe_cell(e.get("voucher_number", "")),
-            "Date":         e.get("date", ""),
-            "Description":  _safe_cell(e.get("description", "")),
-            "Category":     _safe_cell(e.get("category", "").replace("_", " ").title()),
-            "Type":         "Credit" if e["entry_type"] == "credit" else "Debit",
-            "Credit (Rs)":  e["amount"] if e["entry_type"] == "credit" else 0,
-            "Debit (Rs)":   e["amount"] if e["entry_type"] == "debit" else 0,
+            "Voucher No": _safe_cell(e.get("voucher_number", "")),
+            "Date": e.get("date", ""),
+            "Description": _safe_cell(e.get("description", "")),
+            "Category": _safe_cell((e.get("category") or "").replace("_", " ").title()),
+            "Type": "Credit" if e["entry_type"] == "credit" else "Debit",
+            "Credit (Rs)": e["amount"] if e["entry_type"] == "credit" else 0,
+            "Debit (Rs)": e["amount"] if e["entry_type"] == "debit" else 0,
             "Balance (Rs)": round(running_bal, 2),
         })
-    member_rows = [
-        {
-            "Member ID":    m.get("member_id", ""),
-            "Name":         _safe_cell(m.get("name", "")),
-            "Mobile":       _safe_cell(m.get("mobile", "")),
-            "Address":      _safe_cell(m.get("address", "")),
-            "Joining Date": m.get("joining_date", ""),
-            "Status":       m.get("status", "").title(),
-        }
-        for m in members
-    ]
+    member_rows = [{
+        "Member ID": m.get("member_id", ""),
+        "Name": _safe_cell(m.get("name", "")),
+        "Mobile": _safe_cell(m.get("mobile", "")),
+        "Address": _safe_cell(m.get("address", "")),
+        "Joining Date": m.get("joining_date", ""),
+        "Status": (m.get("status") or "").title(),
+    } for m in members]
     buf = io.BytesIO()
     with pd.ExcelWriter(buf, engine="openpyxl") as writer:
         (pd.DataFrame(contrib_rows) if contrib_rows else pd.DataFrame(columns=["Receipt No","Month","Year","Member Name","Amount (Rs)","Payment Method","Date Paid"])).to_excel(writer, sheet_name=f"Contributions {yr}", index=False)
@@ -1359,55 +1540,36 @@ async def export_excel_report(
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={"Content-Disposition": f"attachment; filename=Twenty20_Wariyad_Report_{yr}.xlsx"})
 
-
 @api_router.get("/reports/export/pdf")
-async def export_pdf_report(
-    year: Optional[int] = None,
-    user: dict = Depends(require_roles("super_admin", "president", "treasurer", "secretary", "auditor"))
-):
+async def export_pdf_report(year: Optional[int] = None,
+        user: dict = Depends(require_roles("super_admin", "president", "treasurer", "secretary", "auditor")),
+        session: AsyncSession = Depends(get_session)):
     yr = year or datetime.now().year
-    contributions = await db.contributions.find({"year": yr}).to_list(5000)
-    benefits_paid = await db.benefits.find({"status": "paid"}).to_list(500)
-    medical_paid = await db.medical_aid.find({"status": "paid"}).to_list(500)
-    cashbook = await db.cashbook.find({}).to_list(10000)
-    members = await db.members.find({}).to_list(1000)
-
+    contributions = [c.model_dump() for c in (await session.execute(select(Payment).where(Payment.year == yr))).scalars().all()]
+    benefits_paid = [b.model_dump() for b in (await session.execute(select(Benefit).where(Benefit.status == "paid"))).scalars().all()]
+    medical_paid = [m.model_dump() for m in (await session.execute(select(MedicalAid).where(MedicalAid.status == "paid"))).scalars().all()]
+    cashbook = [e.model_dump() for e in (await session.execute(select(Cashbook))).scalars().all()]
+    members = [m.model_dump() for m in (await session.execute(select(Member))).scalars().all()]
     total_contrib = sum(c["amount"] for c in contributions)
     total_credits = sum(e["amount"] for e in cashbook if e["entry_type"] == "credit")
     total_debits = sum(e["amount"] for e in cashbook if e["entry_type"] == "debit")
     balance = total_credits - total_debits
     monthly = {}
     for c in contributions:
-        m = c["month"]
-        if m not in monthly:
-            monthly[m] = {"count": 0, "amount": 0}
-        monthly[m]["count"] += 1
-        monthly[m]["amount"] += c["amount"]
-
-    pdf = new_pdf()
-    pdf.set_margins(15, 15, 15)
-    pdf.add_page()
-    # Header
-    pdf.set_fill_color(22, 101, 52)
-    pdf.rect(0, 0, 210, 42, "F")
-    pdf.image(LOGO_WHITE, x=12, y=7, h=28)
-    pdf.set_text_color(255, 255, 255)
-    pdf.set_y(10)
-    pdf.set_font("noto", "B", 18)
+        monthly.setdefault(c["month"], {"count": 0, "amount": 0})
+        monthly[c["month"]]["count"] += 1
+        monthly[c["month"]]["amount"] += c["amount"]
+    pdf = new_pdf(); pdf.set_margins(15, 15, 15); pdf.add_page()
+    pdf.set_fill_color(22, 101, 52); pdf.rect(0, 0, 210, 42, "F")
+    try: pdf.image(LOGO_WHITE, x=12, y=7, h=28)
+    except Exception: pass
+    pdf.set_text_color(255, 255, 255); pdf.set_y(10); pdf.set_font("noto", "B", 18)
     pdf.cell(0, 9, "TWENTY20 CHARITY GROUP", ln=True, align="C")
-    pdf.set_font("noto", "B", 11)
-    pdf.cell(0, 7, "WARIYAD", ln=True, align="C")
-    pdf.set_font("noto", "", 9)
-    pdf.cell(0, 6, f"Annual Financial Report - {yr}", ln=True, align="C")
-    pdf.set_y(50)
-    pdf.set_text_color(28, 25, 23)
-    # Summary
-    pdf.set_font("noto", "B", 12)
-    pdf.set_text_color(22, 101, 52)
-    pdf.cell(0, 8, f"ANNUAL SUMMARY - {yr}", ln=True)
-    pdf.set_draw_color(200, 200, 200)
-    pdf.line(15, pdf.get_y(), 195, pdf.get_y())
-    pdf.ln(4)
+    pdf.set_font("noto", "B", 11); pdf.cell(0, 7, "WARIYAD", ln=True, align="C")
+    pdf.set_font("noto", "", 9); pdf.cell(0, 6, f"Annual Financial Report - {yr}", ln=True, align="C")
+    pdf.set_y(50); pdf.set_text_color(28, 25, 23)
+    pdf.set_font("noto", "B", 12); pdf.set_text_color(22, 101, 52); pdf.cell(0, 8, f"ANNUAL SUMMARY - {yr}", ln=True)
+    pdf.set_draw_color(200, 200, 200); pdf.line(15, pdf.get_y(), 195, pdf.get_y()); pdf.ln(4)
     pdf.set_text_color(28, 25, 23)
     active = sum(1 for m in members if m.get("status") == "active")
     m_marriage = [b for b in benefits_paid if b.get("benefit_type") == "marriage"]
@@ -1423,250 +1585,192 @@ async def export_pdf_report(
         ("Housewarming Benefits Paid", f"{len(m_house)} (Rs. {sum(b.get('amount',0) for b in m_house):,.0f})"),
         ("Medical Aid Cases Paid", str(len(medical_paid))),
     ]:
-        pdf.set_font("noto", "B", 10)
-        pdf.cell(110, 7, label, ln=False)
-        pdf.set_font("noto", "", 10)
-        pdf.cell(0, 7, value, ln=True)
-    # Monthly table
-    pdf.ln(5)
-    pdf.set_font("noto", "B", 11)
-    pdf.set_text_color(22, 101, 52)
-    pdf.cell(0, 8, "MONTHLY CONTRIBUTION BREAKDOWN", ln=True)
-    pdf.line(15, pdf.get_y(), 195, pdf.get_y())
-    pdf.ln(3)
-    pdf.set_fill_color(22, 101, 52)
-    pdf.set_text_color(255, 255, 255)
-    pdf.set_font("noto", "B", 9)
+        pdf.set_font("noto", "B", 10); pdf.cell(110, 7, label, ln=False)
+        pdf.set_font("noto", "", 10); pdf.cell(0, 7, value, ln=True)
+    pdf.ln(5); pdf.set_font("noto", "B", 11); pdf.set_text_color(22, 101, 52)
+    pdf.cell(0, 8, "MONTHLY CONTRIBUTION BREAKDOWN", ln=True); pdf.line(15, pdf.get_y(), 195, pdf.get_y()); pdf.ln(3)
+    pdf.set_fill_color(22, 101, 52); pdf.set_text_color(255, 255, 255); pdf.set_font("noto", "B", 9)
     pdf.cell(60, 7, "Month", border=1, fill=True, align="C")
     pdf.cell(50, 7, "Members Paid", border=1, fill=True, align="C")
-    pdf.cell(70, 7, "Amount Collected (Rs)", border=1, fill=True, align="C")
-    pdf.ln()
-    pdf.set_text_color(28, 25, 23)
-    pdf.set_font("noto", "", 9)
-    t_count = 0
+    pdf.cell(70, 7, "Amount Collected (Rs)", border=1, fill=True, align="C"); pdf.ln()
+    pdf.set_text_color(28, 25, 23); pdf.set_font("noto", "", 9); t_count = 0
     for m_idx in range(1, 13):
-        md = monthly.get(m_idx, {"count": 0, "amount": 0})
-        fill = m_idx % 2 == 0
-        if fill:
-            pdf.set_fill_color(248, 248, 248)
-        else:
-            pdf.set_fill_color(255, 255, 255)
+        md = monthly.get(m_idx, {"count": 0, "amount": 0}); fill = m_idx % 2 == 0
+        pdf.set_fill_color(248, 248, 248) if fill else pdf.set_fill_color(255, 255, 255)
         pdf.cell(60, 6, _MONTH_NAMES_FULL[m_idx], border=1, fill=fill)
         pdf.cell(50, 6, str(md["count"]), border=1, fill=fill, align="C")
-        pdf.cell(70, 6, f"{md['amount']:,.0f}", border=1, fill=fill, align="R")
-        pdf.ln()
+        pdf.cell(70, 6, f"{md['amount']:,.0f}", border=1, fill=fill, align="R"); pdf.ln()
         t_count += md["count"]
-    pdf.set_fill_color(22, 101, 52)
-    pdf.set_text_color(255, 255, 255)
-    pdf.set_font("noto", "B", 9)
-    pdf.cell(60, 7, "TOTAL", border=1, fill=True)
-    pdf.cell(50, 7, str(t_count), border=1, fill=True, align="C")
-    pdf.cell(70, 7, f"{total_contrib:,.0f}", border=1, fill=True, align="R")
-    pdf.ln()
-    # Footer
-    pdf.ln(10)
-    pdf.set_text_color(120, 113, 108)
-    pdf.set_font("noto", "I", 8)
-    pdf.set_draw_color(231, 229, 228)
-    pdf.line(15, pdf.get_y(), 195, pdf.get_y())
-    pdf.ln(4)
+    pdf.set_fill_color(22, 101, 52); pdf.set_text_color(255, 255, 255); pdf.set_font("noto", "B", 9)
+    pdf.cell(60, 7, "TOTAL", border=1, fill=True); pdf.cell(50, 7, str(t_count), border=1, fill=True, align="C")
+    pdf.cell(70, 7, f"{total_contrib:,.0f}", border=1, fill=True, align="R"); pdf.ln()
+    pdf.ln(10); pdf.set_text_color(120, 113, 108); pdf.set_font("noto", "I", 8)
+    pdf.set_draw_color(231, 229, 228); pdf.line(15, pdf.get_y(), 195, pdf.get_y()); pdf.ln(4)
     pdf.cell(0, 5, f"Generated on {datetime.now().strftime('%d %B %Y')} - Twenty20 Charity Group Wariyad", ln=True, align="C")
     pdf.cell(0, 5, "This is a computer-generated report. For official audit purposes.", ln=True, align="C")
-    pdf_bytes = bytes(pdf.output())
-    return StreamingResponse(io.BytesIO(pdf_bytes),
-        media_type="application/pdf",
+    return StreamingResponse(io.BytesIO(bytes(pdf.output())), media_type="application/pdf",
         headers={"Content-Disposition": f"attachment; filename=Twenty20_Wariyad_Report_{yr}.pdf"})
 
 
 # ── NOTIFICATIONS ──────────────────────────────────────────────────────────────
 @api_router.get("/notifications/defaulters")
-async def get_defaulters(
-    month: int, year: int,
-    user: dict = Depends(require_roles("super_admin", "president", "secretary", "treasurer"))
-):
-    members = await db.members.find({"status": "active"}).to_list(500)
-    contributions = await db.contributions.find({"year": year, "month": month}).to_list(500)
-    paid_ids = {c["member_id"] for c in contributions}
-    defaulters = [
-        {
-            "member_id": str(m["_id"]),
-            "member_code": m.get("member_id", ""),
-            "name": m["name"],
-            "mobile": m.get("mobile", ""),
-            "address": m.get("address", ""),
-        }
-        for m in members if str(m["_id"]) not in paid_ids
-    ]
-    return {
-        "month": month, "year": year,
-        "total_active": len(members),
-        "total_paid": len(paid_ids),
-        "total_defaulters": len(defaulters),
-        "defaulters": defaulters,
-        "twilio_enabled": TWILIO_ENABLED,
-    }
-
+async def get_defaulters(month: int, year: int,
+        user: dict = Depends(require_roles("super_admin", "president", "secretary", "treasurer")),
+        session: AsyncSession = Depends(get_session)):
+    """Defaulters = members with an outstanding balance as of (year, month),
+    ranked by amount owed. Includes outstanding amount + months pending."""
+    settings = await get_settings(session)
+    members = (await session.execute(select(Member).where(Member.status == "active"))).scalars().all()
+    defaulters = []
+    up_to_date = 0
+    for m in members:
+        rows = await member_ledger(session, m, settings, year, month)
+        row = next((r for r in rows if r.year == year and r.month == month), None)
+        if row is None:
+            continue
+        if row.balance < 0:
+            defaulters.append({"member_id": m.id, "member_code": m.member_id, "name": m.name,
+                               "mobile": m.mobile, "address": m.address,
+                               "outstanding": -row.balance, "status": row.status})
+        else:
+            up_to_date += 1
+    defaulters.sort(key=lambda d: -d["outstanding"])
+    return {"month": month, "year": year, "total_active": len(members),
+            "total_paid": up_to_date, "total_defaulters": len(defaulters),
+            "defaulters": defaulters, "twilio_enabled": TWILIO_ENABLED}
 
 @api_router.post("/notifications/send-reminders")
-async def send_reminders(
-    data: NotificationSendReq,
-    user: dict = Depends(require_roles("super_admin", "president", "secretary", "treasurer"))
-):
-    members = await db.members.find({"status": "active"}).to_list(500)
-    contributions = await db.contributions.find({"year": data.year, "month": data.month}).to_list(500)
-    paid_ids = {c["member_id"] for c in contributions}
-    defaulters = [m for m in members if str(m["_id"]) not in paid_ids]
+async def send_reminders(data: NotificationSendReq,
+        user: dict = Depends(require_roles("super_admin", "president", "secretary", "treasurer")),
+        session: AsyncSession = Depends(get_session)):
+    settings = await get_settings(session)
+    members = (await session.execute(select(Member).where(Member.status == "active"))).scalars().all()
+    defaulters = []
+    for m in members:
+        rows = await member_ledger(session, m, settings, data.year, data.month)
+        row = next((r for r in rows if r.year == data.year and r.month == data.month), None)
+        if row is not None and row.balance < 0:
+            defaulters.append(m)
     if not defaulters:
         return {"sent": 0, "message": "No defaulters found for this month.", "mode": "none", "results": []}
     month_name = _MONTH_NAMES_FULL[data.month] if 1 <= data.month <= 12 else str(data.month)
     msg = (data.message or
            f"Dear Member, your monthly contribution of Rs.100 for {month_name} {data.year} "
            f"is pending. Please pay at the earliest. - Twenty20 Charity Group Wariyad")
-    results = []
-    sms_sent = 0
-    wa_sent = 0
+    results = []; sms_sent = wa_sent = 0
     if TWILIO_ENABLED:
         tc = TwilioClient(_TWILIO_SID, _TWILIO_TOKEN)
         for m in defaulters:
-            phone = m.get("mobile", "")
+            phone = m.mobile or ""
             if not phone:
-                results.append({"member": m["name"], "status": "skipped", "reason": "no phone"})
-                continue
+                results.append({"member": m.name, "status": "skipped", "reason": "no phone"}); continue
             ph = phone.strip().replace(" ", "").replace("-", "")
             if not ph.startswith("+"):
                 ph = "+91" + ph
             sms_ok = wa_ok = False
             try:
-                tc.messages.create(body=msg, from_=_TWILIO_FROM, to=ph)
-                sms_ok = True; sms_sent += 1
+                tc.messages.create(body=msg, from_=_TWILIO_FROM, to=ph); sms_ok = True; sms_sent += 1
             except Exception as e:
-                logger.error(f"SMS failed for {m['name']}: {e}")
+                logger.error(f"SMS failed for {m.name}: {e}")
             if _TWILIO_WA_FROM:
                 try:
-                    tc.messages.create(body=msg, from_=f"whatsapp:{_TWILIO_WA_FROM}", to=f"whatsapp:{ph}")
-                    wa_ok = True; wa_sent += 1
+                    tc.messages.create(body=msg, from_=f"whatsapp:{_TWILIO_WA_FROM}", to=f"whatsapp:{ph}"); wa_ok = True; wa_sent += 1
                 except Exception as e:
-                    logger.error(f"WhatsApp failed for {m['name']}: {e}")
-            results.append({"member": m["name"], "phone": ph,
+                    logger.error(f"WhatsApp failed for {m.name}: {e}")
+            results.append({"member": m.name, "phone": ph,
                             "sms": "sent" if sms_ok else "failed",
                             "whatsapp": "sent" if wa_ok else "failed"})
     else:
         for m in defaulters:
-            logger.info(f"[MOCK SMS] To: {m.get('mobile','N/A')} | {msg[:80]}")
-            results.append({"member": m["name"], "phone": m.get("mobile", "N/A"), "sms": "mock", "whatsapp": "mock"})
-    await db.notification_logs.insert_one({
-        "type": "monthly_reminder", "month": data.month, "year": data.year,
-        "sent_by": user["id"], "mode": "live" if TWILIO_ENABLED else "mock",
-        "sent_count": len(defaulters), "sms_sent": sms_sent, "wa_sent": wa_sent,
-        "results": results[:50], "created_at": datetime.now(timezone.utc).isoformat()
-    })
-    return {
-        "sent": len(defaulters), "sms_sent": sms_sent, "wa_sent": wa_sent,
-        "mode": "live" if TWILIO_ENABLED else "mock",
-        "message": (
-            f"Reminders sent to {len(defaulters)} defaulters via SMS and WhatsApp."
-            if TWILIO_ENABLED else
-            f"[MOCK] Twilio not configured. Would notify {len(defaulters)} defaulters. "
-            f"Add TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_FROM_PHONE to backend/.env to enable real sending."
-        ),
-        "results": results,
-    }
+            logger.info(f"[MOCK SMS] To: {m.mobile or 'N/A'} | {msg[:80]}")
+            results.append({"member": m.name, "phone": m.mobile or "N/A", "sms": "mock", "whatsapp": "mock"})
+    session.add(NotificationLog(type="monthly_reminder", month=data.month, year=data.year,
+        sent_by=user["id"], mode="live" if TWILIO_ENABLED else "mock",
+        sent_count=len(defaulters), sms_sent=sms_sent, wa_sent=wa_sent, results=results[:50]))
+    await session.commit()
+    return {"sent": len(defaulters), "sms_sent": sms_sent, "wa_sent": wa_sent,
+            "mode": "live" if TWILIO_ENABLED else "mock",
+            "message": (f"Reminders sent to {len(defaulters)} defaulters via SMS and WhatsApp."
+                        if TWILIO_ENABLED else
+                        f"[MOCK] Twilio not configured. Would notify {len(defaulters)} defaulters. "
+                        f"Add TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_FROM_PHONE to backend/.env to enable real sending."),
+            "results": results}
 
 
 # ── AUDIT MODULE ───────────────────────────────────────────────────────────────
 @api_router.get("/audit/report")
-async def get_audit_report(
-    year: Optional[int] = None,
-    user: dict = Depends(require_roles("super_admin", "president", "secretary", "treasurer", "auditor"))
-):
+async def get_audit_report(year: Optional[int] = None,
+        user: dict = Depends(require_roles("super_admin", "president", "secretary", "treasurer", "auditor")),
+        session: AsyncSession = Depends(get_session)):
     yr = year or datetime.now().year
-    contributions = await db.contributions.find({"year": yr}).to_list(5000)
-    benefits_paid = await db.benefits.find({"status": "paid"}).to_list(500)
-    medical_paid = await db.medical_aid.find({"status": "paid"}).to_list(500)
-    death_delivered = await db.death_assistance.find({"status": "delivered"}).to_list(500)
-    cashbook = await db.cashbook.find({}).to_list(10000)
-    members = await db.members.find({}).to_list(1000)
+    contributions = [c.model_dump() for c in (await session.execute(select(Payment).where(Payment.year == yr))).scalars().all()]
+    benefits_paid = [b.model_dump() for b in (await session.execute(select(Benefit).where(Benefit.status == "paid"))).scalars().all()]
+    medical_paid = [m.model_dump() for m in (await session.execute(select(MedicalAid).where(MedicalAid.status == "paid"))).scalars().all()]
+    death_delivered = (await session.execute(select(DeathAssistance).where(DeathAssistance.status == "delivered"))).scalars().all()
+    cashbook = (await session.execute(select(Cashbook))).scalars().all()
+    members = (await session.execute(select(Member))).scalars().all()
     total_contrib = sum(c["amount"] for c in contributions)
-    total_credits = sum(e["amount"] for e in cashbook if e["entry_type"] == "credit")
-    total_debits = sum(e["amount"] for e in cashbook if e["entry_type"] == "debit")
+    total_credits = sum(e.amount for e in cashbook if e.entry_type == "credit")
+    total_debits = sum(e.amount for e in cashbook if e.entry_type == "debit")
     monthly = {}
     for c in contributions:
-        m = c["month"]
-        if m not in monthly:
-            monthly[m] = {"month": m, "count": 0, "amount": 0}
-        monthly[m]["count"] += 1
-        monthly[m]["amount"] += c["amount"]
+        monthly.setdefault(c["month"], {"month": c["month"], "count": 0, "amount": 0})
+        monthly[c["month"]]["count"] += 1
+        monthly[c["month"]]["amount"] += c["amount"]
     m_marriage = [b for b in benefits_paid if b.get("benefit_type") == "marriage"]
     m_house = [b for b in benefits_paid if b.get("benefit_type") == "housewarming"]
-    return {
-        "year": yr,
-        "total_members": len(members),
-        "active_members": sum(1 for m in members if m.get("status") == "active"),
-        "total_contributions": total_contrib,
-        "contribution_count": len(contributions),
-        "monthly_breakdown": sorted(monthly.values(), key=lambda x: x["month"]),
-        "marriage_count": len(m_marriage),
-        "marriage_total": sum(b.get("amount", 0) for b in m_marriage),
-        "housewarming_count": len(m_house),
-        "housewarming_total": sum(b.get("amount", 0) for b in m_house),
-        "medical_aid_count": len(medical_paid),
-        "medical_aid_total": sum(d.get("recommended_amount") or d.get("estimated_expense", 0) for d in medical_paid),
-        "death_cases": len(death_delivered),
-        "total_credits": total_credits,
-        "total_debits": total_debits,
-        "closing_balance": round(total_credits - total_debits, 2),
-    }
-
+    return {"year": yr, "total_members": len(members),
+            "active_members": sum(1 for m in members if m.status == "active"),
+            "total_contributions": total_contrib, "contribution_count": len(contributions),
+            "monthly_breakdown": sorted(monthly.values(), key=lambda x: x["month"]),
+            "marriage_count": len(m_marriage), "marriage_total": sum(b.get("amount", 0) for b in m_marriage),
+            "housewarming_count": len(m_house), "housewarming_total": sum(b.get("amount", 0) for b in m_house),
+            "medical_aid_count": len(medical_paid),
+            "medical_aid_total": sum((d.get("recommended_amount") or d.get("estimated_expense", 0)) for d in medical_paid),
+            "death_cases": len(death_delivered), "total_credits": total_credits, "total_debits": total_debits,
+            "closing_balance": round(total_credits - total_debits, 2)}
 
 @api_router.post("/audit/sign-off")
-async def create_audit_sign_off(
-    data: AuditSignOffCreate,
-    user: dict = Depends(require_roles("auditor"))
-):
-    existing = await db.audit_sign_offs.find_one({"year": data.year, "auditor_id": user["id"]})
-    if existing:
+async def create_audit_sign_off(data: AuditSignOffCreate, user: dict = Depends(require_roles("auditor")),
+                                session: AsyncSession = Depends(get_session)):
+    dup = await session.execute(select(AuditSignOff).where(AuditSignOff.year == data.year, AuditSignOff.auditor_id == user["id"]))
+    if dup.scalar_one_or_none():
         raise HTTPException(400, f"You have already signed off on year {data.year}. Only one sign-off per auditor per year is allowed.")
-    doc = {
-        "year": data.year, "remarks": data.remarks,
-        "auditor_id": user["id"], "auditor_name": user["name"],
-        "auditor_email": user["email"],
-        "signed_at": datetime.now(timezone.utc).isoformat(),
-        "created_at": datetime.now(timezone.utc).isoformat(),
-    }
-    result = await db.audit_sign_offs.insert_one(doc)
-    doc["id"] = str(result.inserted_id)
-    doc.pop("_id", None)
-    return doc
-
+    a = AuditSignOff(year=data.year, remarks=data.remarks, auditor_id=user["id"],
+                     auditor_name=user["name"], auditor_email=user["email"])
+    session.add(a)
+    await session.commit()
+    await session.refresh(a)
+    return a.model_dump()
 
 @api_router.get("/audit/sign-offs")
-async def list_audit_sign_offs(
-    user: dict = Depends(require_roles("super_admin", "president", "secretary", "treasurer", "auditor"))
-):
-    docs = await db.audit_sign_offs.find().sort("signed_at", -1).to_list(200)
-    return ss(docs)
+async def list_audit_sign_offs(user: dict = Depends(require_roles("super_admin", "president", "secretary", "treasurer", "auditor")),
+                               session: AsyncSession = Depends(get_session)):
+    res = await session.execute(select(AuditSignOff).order_by(AuditSignOff.signed_at.desc()).limit(200))
+    return [a.model_dump() for a in res.scalars().all()]
+
+
+# ── STARTUP / SHUTDOWN ────────────────────────────────────────────────────────
 @app.on_event("startup")
 async def startup():
-    await db.users.create_index("email", unique=True)
-    await db.contributions.create_index([("member_id", 1), ("month", 1), ("year", 1)])
-    await db.members.create_index("member_id", unique=True)
-    admin_email    = os.environ["ADMIN_EMAIL"]
-    admin_password = os.environ["ADMIN_PASSWORD"]   # no default — must be set explicitly
-    existing = await db.users.find_one({"email": admin_email})
-    if not existing:
-        await db.users.insert_one({
-            "name": "Super Admin", "email": admin_email,
-            "password_hash": hash_password(admin_password),
-            "role": "super_admin", "is_active": True,
-            "created_at": datetime.now(timezone.utc).isoformat()
-        })
-        logger.info(f"Admin seeded: {admin_email}")
-    elif not verify_password(admin_password, existing["password_hash"]):
-        await db.users.update_one({"email": admin_email},
-            {"$set": {"password_hash": hash_password(admin_password)}})
+    await init_db()  # create tables (indexes/uniques come from the models)
+    admin_email = os.environ["ADMIN_EMAIL"]
+    admin_password = os.environ["ADMIN_PASSWORD"]  # no default — must be set explicitly
+    async with async_session_maker() as session:
+        res = await session.execute(select(User).where(User.email == admin_email))
+        existing = res.scalar_one_or_none()
+        if not existing:
+            session.add(User(name="Super Admin", email=admin_email,
+                             password_hash=hash_password(admin_password),
+                             role="super_admin", is_active=True))
+            await session.commit()
+            logger.info(f"Admin seeded: {admin_email}")
+        elif not verify_password(admin_password, existing.password_hash):
+            existing.password_hash = hash_password(admin_password)
+            await session.commit()
 
 app.include_router(api_router)
 
 @app.on_event("shutdown")
 async def shutdown():
-    client.close()
+    await engine.dispose()

@@ -5,7 +5,7 @@ import { useTheme } from "next-themes";
 import {
   HouseLine, Users, CurrencyInr, HandHeart, FirstAid,
   Skull, Notebook, UsersThree, CalendarBlank, ChartBar,
-  SignOut, List, UserGear, Bell, Scales, Sun, Moon
+  SignOut, List, UserGear, Bell, Scales, Sun, Moon, Gear
 } from "@phosphor-icons/react";
 import { LAYOUT, AUTH } from "@/constants/testIds";
 
@@ -23,6 +23,7 @@ const NAV = [
   { to: "/notifications",    label: "Notifications",   icon: Bell,          roles: ["super_admin","president","secretary","treasurer"] },
   { to: "/audit",            label: "Audit",           icon: Scales,        roles: ["super_admin","president","secretary","treasurer","auditor"] },
   { to: "/users",            label: "User Management", icon: UserGear,      roles: ["super_admin","secretary"] },
+  { to: "/settings",         label: "Settings",        icon: Gear,          roles: ["super_admin","treasurer"] },
 ];
 
 const ROLE_LABELS = {

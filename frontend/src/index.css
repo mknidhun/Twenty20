@@ -165,3 +165,46 @@ h1, h2, h3, h4, h5, h6 {
 .animate-fade-in-delay-1 { animation: fadeIn 0.3s ease-out 0.1s forwards; opacity: 0; }
 .animate-fade-in-delay-2 { animation: fadeIn 0.3s ease-out 0.2s forwards; opacity: 0; }
 .animate-fade-in-delay-3 { animation: fadeIn 0.3s ease-out 0.3s forwards; opacity: 0; }
+
+@media (max-width: 640px) {
+  main > .p-6,
+  main > .p-8 {
+    padding: 1rem;
+  }
+
+  button,
+  input:not([type="checkbox"]):not([type="radio"]),
+  select,
+  textarea {
+    min-height: 44px;
+  }
+
+  button:has(> svg:only-child) {
+    min-width: 44px;
+  }
+
+  .sidebar-link {
+    min-height: 44px;
+  }
+
+  .stat-card {
+    padding: 1rem;
+  }
+
+  .overflow-x-auto {
+    overscroll-behavior-inline: contain;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .fixed.inset-0.z-50 > .bg-card {
+    max-height: calc(100dvh - 2rem);
+    overflow-y: auto;
+    overscroll-behavior: contain;
+  }
+}
+
+@media (max-width: 360px) {
+  .mobile-brand-text {
+    display: none;
+  }
+}

@@ -136,7 +136,7 @@ function ImportDialog({ onSave, onClose }) {
 function MemberForm({ initial, onSave, onClose }) {
   const [form, setForm] = useState(initial || {
     name: "", mobile: "", address: "", joining_date: new Date().toISOString().split("T")[0],
-    status: "active", aadhaar: ""
+    status: "active", aadhaar: "", intro_rate: "", opening_balance: 0
   });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -147,10 +147,13 @@ function MemberForm({ initial, onSave, onClose }) {
     e.preventDefault();
     setLoading(true);
     try {
+      const payload = { ...form,
+        intro_rate: form.intro_rate === "" || form.intro_rate == null ? null : parseFloat(form.intro_rate),
+        opening_balance: parseFloat(form.opening_balance || 0) };
       if (initial?.id) {
-        await api.put(`/members/${initial.id}`, form);
+        await api.put(`/members/${initial.id}`, payload);
       } else {
-        await api.post("/members", form);
+        await api.post("/members", payload);
       }
       onSave();
     } catch (err) {
@@ -205,6 +208,20 @@ function MemberForm({ initial, onSave, onClose }) {
               <label className="block text-sm font-medium text-foreground mb-1">Aadhaar (optional)</label>
               <input value={form.aadhaar} onChange={e => f("aadhaar", e.target.value)}
                 className="w-full border border-input rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring/30 focus:border-primary" />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-foreground mb-1">Intro monthly rate (₹)</label>
+              <input type="number" placeholder="default (org intro rate)" value={form.intro_rate ?? ""}
+                onChange={e => f("intro_rate", e.target.value)}
+                className="w-full border border-input rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring/30 focus:border-primary" />
+              <p className="text-xs text-muted-foreground mt-1">First-year rate for new members. Blank = use org default.</p>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-foreground mb-1">Opening balance (₹)</label>
+              <input type="number" value={form.opening_balance ?? 0}
+                onChange={e => f("opening_balance", e.target.value)}
+                className="w-full border border-input rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring/30 focus:border-primary" />
+              <p className="text-xs text-muted-foreground mt-1">Carried-in balance. Negative = arrears owed, positive = advance.</p>
             </div>
           </div>
           {error && <p className="text-destructive text-sm bg-destructive/10 border border-destructive/30 rounded px-3 py-2">{error}</p>}
@@ -326,6 +343,7 @@ export default function Members() {
                   <th className="text-left">Mobile</th>
                   <th className="text-left">Address</th>
                   <th className="text-left">Joining Date</th>
+                  <th className="text-right">Balance</th>
                   <th className="text-left">Status</th>
                   <th className="text-right">Actions</th>
                 </tr>
@@ -338,6 +356,15 @@ export default function Members() {
                     <td className="text-muted-foreground">{m.mobile}</td>
                     <td className="text-muted-foreground max-w-xs truncate">{m.address}</td>
                     <td>{m.joining_date ? new Date(m.joining_date).toLocaleDateString("en-IN", {day:"2-digit",month:"short",year:"numeric"}) : "-"}</td>
+                    <td className="text-right">
+                      {m.balance == null ? <span className="text-muted-foreground/50">-</span> : (
+                        <span className={`text-xs font-semibold ${m.balance < 0 ? "text-amber-600" : m.balance > 0 ? "text-sky-600" : "text-emerald-600"}`}
+                          title={m.balance_status}>
+                          {m.balance < 0 ? `-₹${Math.abs(m.balance).toLocaleString("en-IN")}` : `₹${m.balance.toLocaleString("en-IN")}`}
+                          <span className="block text-[10px] font-normal text-muted-foreground">{m.balance_status}</span>
+                        </span>
+                      )}
+                    </td>
                     <td>
                       <span className={`inline-flex px-2 py-0.5 text-xs font-medium rounded border ${STATUS_COLORS[m.status] || "badge-pending"}`}>
                         {m.status}

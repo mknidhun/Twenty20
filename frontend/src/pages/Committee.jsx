@@ -52,7 +52,7 @@ function CommitteeDialog({ onSave, onClose }) {
       <div className="bg-card rounded-lg shadow-lg w-full max-w-lg max-h-[90vh] overflow-y-auto">
         <div className="flex items-center justify-between px-5 py-4 border-b border-border sticky top-0 bg-card">
           <h3 className="font-semibold text-foreground font-heading">Form New Committee</h3>
-          <button onClick={onClose} className="text-muted-foreground/70 hover:text-foreground"><X size={18} /></button>
+          <button onClick={onClose} className="text-muted-foreground/70 hover:text-foreground" aria-label="Close committee form" title="Close"><X size={18} /></button>
         </div>
         <form onSubmit={handleSubmit} className="p-5 space-y-4">
           <div className="grid grid-cols-3 gap-3">
@@ -160,7 +160,7 @@ function HandoverDialog({ onSave, onClose }) {
       <div className="bg-card rounded-lg shadow-lg w-full max-w-xl max-h-[90vh] overflow-y-auto">
         <div className="flex items-center justify-between px-5 py-4 border-b border-border sticky top-0 bg-card">
           <h3 className="font-semibold text-foreground font-heading">Record Committee Handover</h3>
-          <button onClick={onClose} className="text-muted-foreground/70 hover:text-foreground"><X size={18} /></button>
+          <button onClick={onClose} className="text-muted-foreground/70 hover:text-foreground" aria-label="Close handover form" title="Close"><X size={18} /></button>
         </div>
         <form onSubmit={handleSubmit} className="p-5 space-y-5">
           {/* Years + Date + Balance */}
